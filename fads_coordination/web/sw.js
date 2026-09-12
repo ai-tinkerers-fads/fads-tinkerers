@@ -12,26 +12,19 @@ self.addEventListener('message', event => {
     .map(id => actions.find(action => action.id === id)).filter(Boolean).slice(0, limit);
   event.waitUntil(self.registration.showNotification(item.body.plainText || item.body.text || item.body.name, {
     tag: item.id,
+    renotify: event.data.renotify === true,
     actions: visible.map(action => ({action: action.id, title: action.label})),
     data: {actions, resolveUrl}
+  }).then(() => event.ports?.[0]?.postMessage({shown: true})).catch(error => {
+    event.ports?.[0]?.postMessage({error: error.message});
+    event.source?.postMessage({error: error.message});
   }));
 });
 async function openEmployee(path) {
   const url = new URL(path, self.location.origin);
-  const windows = await self.clients.matchAll({type: 'window', includeUncontrolled: true});
-  for (const client of windows) {
-    const current = new URL(client.url);
-    if (current.pathname === url.pathname && current.searchParams.get('employeeId') === url.searchParams.get('employeeId')) {
-      try {
-        await client.focus();
-        const navigated = await client.navigate(url.href);
-        if (navigated) return await navigated.focus();
-      } catch (_) {
-        // The tab may close or navigation may replace its WindowClient.
-      }
-    }
-  }
-  return self.clients.openWindow(url.href);
+  const opened = await self.clients.openWindow(url.href);
+  if (opened) await opened.focus();
+  return opened;
 }
 self.addEventListener('notificationclick', event => {
   event.notification.close();
