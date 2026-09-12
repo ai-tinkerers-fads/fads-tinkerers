@@ -216,3 +216,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local ideation and research (shared docs/plan remains tracked)
+/[Ii]dea.txt
+/PLAN.md
+/docs/planning/
+/docs/research/
+
+# Local credentials, runtime databases, and verification artifacts
+.env.*
+!.env.example
+.ambi/
+.DS_Store
+/.fads/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+/artifacts/
+node_modules/
