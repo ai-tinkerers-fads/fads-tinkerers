@@ -1,0 +1,20 @@
+[Unit]
+Description=FADS live voice intake web UI
+After=network-online.target fads-voice-api.service
+Wants=network-online.target fads-voice-api.service
+
+[Service]
+Type=simple
+User=aindoori
+WorkingDirectory=/home/aindoori/Software_Projects/fads-tinkerers/apps/web
+Environment=NODE_ENV=production
+Environment=PORT=8810
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/home/aindoori/Software_Projects/fads-tinkerers/node_modules/.bin/next start --hostname 127.0.0.1 --port 8810
+Restart=always
+RestartSec=2
+StartLimitBurst=0
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

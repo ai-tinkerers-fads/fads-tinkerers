@@ -42,6 +42,28 @@ a { color: inherit; }
   font-weight: 800;
 }
 
+.header-links { display: flex; align-items: center; gap: 24px; }
+.report-modes {
+  display: inline-flex;
+  gap: 6px;
+  margin: -18px 0 30px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ebece5;
+}
+
+.report-modes a,
+.report-modes span {
+  padding: 9px 15px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.active-mode { background: var(--green); color: white; }
+
 .brand span {
   margin-right: 6px;
   padding: 7px 9px;
@@ -259,6 +281,7 @@ footer {
   .issue-grid, .contact-grid { grid-template-columns: 1fr; }
   .timeline { grid-template-columns: repeat(3, 1fr); }
   .masthead { gap: 16px; }
+  .header-links { gap: 12px; font-size: 12px; }
   .brand { font-size: 17px; }
 }
 

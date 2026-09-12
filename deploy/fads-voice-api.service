@@ -1,0 +1,25 @@
+[Unit]
+Description=FADS live voice intake API
+After=network-online.target fads.service
+Wants=network-online.target fads.service
+
+[Service]
+Type=simple
+User=aindoori
+WorkingDirectory=/home/aindoori/Software_Projects/fads-tinkerers/apps/api
+EnvironmentFile=/home/aindoori/.config/fads/runtime.env
+EnvironmentFile=/home/aindoori/.config/fads/openai.env
+Environment=NODE_ENV=production
+Environment=API_PORT=8811
+Environment=WEB_ORIGIN=https://fads.aindoori.com
+Environment=DATA_DIR=/home/aindoori/Software_Projects/fads-tinkerers/data/voice
+Environment=AMBIGUOUS_MODE=live
+Environment=AMBIGUOUS_ASSIGNEE_ID=e291aee4-3f6b-4f34-9860-6d9e7e26c802
+ExecStart=/usr/bin/node dist/main.js
+Restart=always
+RestartSec=2
+StartLimitBurst=0
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
