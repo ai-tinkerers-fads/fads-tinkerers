@@ -16,9 +16,11 @@ dependencies, and keep the reporting resident informed.
 ## Product flow
 
 1. **Report:** A resident submits a road issue through a web page with a photo,
-   location, and optional description.
-2. **Assess:** The backend records the incident. An agent analyzes the report
-   and selects from predefined operational workflows.
+   voice note, typed text, location, or any useful combination of those inputs.
+2. **Normalize and assess:** The backend records the incident, transcribes
+   voice notes, extracts relevant image evidence, and routes the normalized
+   report plus original evidence to an agent. The agent selects from predefined
+   operational workflows.
 3. **Plan:** The system determines required skills, equipment, and task
    dependencies; it chooses an available, qualified crew.
 4. **Coordinate:** Crew members receive work in the right sequence, with the
@@ -38,9 +40,9 @@ dependencies, and keep the reporting resident informed.
 
 Demonstrate one end-to-end incident:
 
-1. a resident uploads an image and location;
-2. the agent classifies fallen branches blocking a road and chooses the branch
-   removal workflow;
+1. a resident submits an image or voice note, typed text, and location;
+2. the agent uses the normalized inputs and original evidence to classify
+   fallen branches blocking a road and chooses the branch removal workflow;
 3. the coordinator assigns an available chainsaw operator, loader operator,
    and disposal/transport driver, respecting skills and schedules;
 4. the web app shows the ordered work plan and expected completion time; and
@@ -50,6 +52,8 @@ Demonstrate one end-to-end incident:
 
 - **Workflow-bound autonomy:** the agent selects and fills predefined workflows;
   it does not invent unsafe field procedures.
+- **Multimodal evidence:** preserve each submitted input and distinguish a
+  voice transcript or visual extraction from the original report.
 - **Right capability, right time:** assignment uses skill, availability,
   equipment, and dependencies.
 - **Human override:** dispatchers can review or replace classification,
