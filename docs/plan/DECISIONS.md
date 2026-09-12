@@ -27,6 +27,19 @@ assessment, workflow execution, and crew coordination.
 
 **Owner:** team
 
+## 2026-09-12 — Deliver live voice intake before operations coordination
+
+**Decision:** Use Next.js with TypeScript and a Node.js/NestJS backend. Use
+GPT-Live-1 for a live resident conversation, read back the complaint or question,
+obtain verbal confirmation, and create an Ambiguous.ai task. Tell the resident
+a customer service agent will contact them if necessary.
+**Why:** This is the approved first cut and establishes the intake path for
+road complaints and repair questions.
+**Consequences:** No repair-status answers or crew dispatch in this increment.
+Real record creation is explicit when credentials are configured; the separate
+text demo creates simulated records only. Corrections require fresh confirmation.
+**Owner:** team
+
 ## 2026-09-12 — Constrain agent behavior to predefined workflows
 
 **Decision:** The agent chooses among a small catalog of human-defined

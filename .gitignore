@@ -203,6 +203,15 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Node applications and local intake data
+node_modules/
+.next/
+*.tsbuildinfo
+.env.*
+!.env.example
+.data/
+coverage/
+
 # Ruff stuff:
 .ruff_cache/
 

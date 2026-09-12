@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-12
 
+## Current implementation slice: live voice intake
+
+The approved first cut uses Next.js/TypeScript and a Node.js/NestJS backend.
+Residents have a live GPT-Live-1 conversation about road complaints or repair
+questions. After an exact readback and verbal confirmation, the backend logs
+an Ambiguous.ai task and explains that a customer service agent will contact
+the resident if necessary. Repair-status answers and crew dispatch are outside
+this increment. See [VOICE_INTAKE.md](VOICE_INTAKE.md) and the root README for
+implementation scope, local setup, and verification.
+
+The broader road-operations goal below remains the follow-on direction.
+
 ## Current goal
 
 Build one convincing road-incident loop: image, voice-note, and text intake
