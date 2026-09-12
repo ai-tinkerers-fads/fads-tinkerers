@@ -52,13 +52,3 @@ safety-critical integrations.
 actions reviewable.
 
 **Owner:** team
-
-## 2026-09-12 — Worker-side module boundary
-
-**Decision:** Duc's slice is a worker-side module with hooks and info packages; agents and backend are out of scope for us.
-
-**Why:** A host can mount the module without depending on the optional demo UI.
-
-**Consequences:** Confirmed packages come in; schedules, reminders, conflicts, and completion references go out. This implementation uses fixtures and local sinks only.
-
-**Owner:** Duc
