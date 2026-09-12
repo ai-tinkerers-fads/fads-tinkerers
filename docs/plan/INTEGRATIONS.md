@@ -4,9 +4,10 @@
 
 | Component | Role |
 | --- | --- |
-| Resident web app | Accepts photo, location, and optional issue description; displays status and ETA. |
+| Resident web app | Accepts typed text, photo, voice note, location, and optional description; displays status and ETA. |
+| Intake normalizer | Stores original inputs, transcribes voice, extracts image evidence, and produces a source-grounded evidence bundle for the agent. |
 | Incident service | Stores reports, status, evidence, chosen workflow, work plan, and updates. |
-| Agent coordinator | Classifies incident, selects a predefined workflow, finds a qualified available crew, calculates an estimate, and explains its choices. |
+| Agent coordinator | Receives the normalized evidence bundle; classifies incident, selects a predefined workflow, finds a qualified available crew, calculates an estimate, and explains its choices. |
 | Dispatcher workspace | Lets staff inspect, override, and track incident plans. |
 | Field workboard | Shows each employee their assigned tasks, location, dependencies, and completion controls. |
 
@@ -17,11 +18,26 @@ type Incident = {
   id: string;
   status: "reported" | "assessed" | "assigned" | "in_progress" | "resolved";
   location: { address?: string; latitude: number; longitude: number };
-  report: { description?: string; imageUrl?: string; reportedAt: string };
+  report: {
+    text?: string;
+    imageUrl?: string;
+    voiceNoteUrl?: string;
+    voiceTranscript?: string;
+    reportedAt: string;
+  };
   classification?: "fallen_branches" | "pothole" | "vehicle_or_debris";
   workflowId?: string;
   estimatedResolutionAt?: string;
   rationale?: string;
+};
+
+type IncidentEvidence = {
+  id: string;
+  incidentId: string;
+  kind: "text" | "image" | "voice" | "transcript" | "image_extraction";
+  value: string;
+  derivedFromEvidenceId?: string;
+  createdAt: string;
 };
 
 type Employee = {
@@ -69,6 +85,17 @@ type WorkAssignment = {
 4. Prefer a crew whose availability allows the earliest completed dependent
    sequence; use distance only as a simple tie-breaker if modeled.
 5. Present the decision rationale and allow dispatcher override.
+
+## Intake and agent-routing policy
+
+1. Keep the original typed text, photo, and voice-note reference with the
+   incident.
+2. Produce a transcript for voice and structured visual observations for an
+   image; label both as derived evidence.
+3. Send the agent the location, resident-provided text, derived evidence, and
+   references to the original inputs as one incident evidence bundle.
+4. Store the workflow classification, confidence, and rationale alongside the
+   evidence bundle that informed it.
 
 ## Safety boundaries
 
