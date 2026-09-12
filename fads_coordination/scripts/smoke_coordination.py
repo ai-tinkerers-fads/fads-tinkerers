@@ -38,9 +38,9 @@ def main():
                 return result
 
             def action(name, **fields):
-                return request("/api/action", {"action": name, **fields})
+                return request("/demo/action", {"action": name, **fields})
 
-            assert request("/health")["mode"] == "simulated"
+            assert request("/health")["mode"] == "fixture"
             state = action("advance", minutes=1)
             note = state["notifications"][0]
             state = action("acknowledge", reminderId=note["reminderId"], employeeId=note["employeeId"])
@@ -61,7 +61,7 @@ def main():
             state = action("remember", lesson=lesson)
             assert len(next(t for t in state["schedule"] if t["taskId"] == "cut")["lessons"]) == 1
             assert not next(t for t in state["schedule"] if t["taskId"] == "load")["lessons"]
-            request("/api/action", {"action": "complete", "taskId": "cut", "actualMinutes": 40, "evidence": "test", "revision": state["package"]["revision"]}, expected=400)
+            request("/demo/action", {"action": "complete", "taskId": "cut", "actualMinutes": 40, "evidence": "test", "revision": state["package"]["revision"]}, expected=400)
             for task_id, actual in (("secure", 10), ("cut", 48), ("load", 20), ("transport", 30), ("verify", 10)):
                 state = action("complete", taskId=task_id, actualMinutes=actual, waitingMinutes=0, scopeChanged=False,
                                evidence="Synthetic observed effort in HTTP test", revision=state["package"]["revision"])
@@ -77,13 +77,13 @@ def main():
             assert next(t for t in state["schedule"] if t["taskId"] == "cut")["lessons"]
             state = action("forget_lesson", id=lesson_id)
             assert not state["lessons"]
-            request("/api/action", {"action": "remember", "lesson": lesson}, expected=409)
+            request("/demo/action", {"action": "remember", "lesson": lesson}, expected=409)
             state = action("forget_outcome", id="demo-history-0")
-            request("/api/action", {"action": "seed_history"}, expected=409)
+            request("/demo/action", {"action": "seed_history"}, expected=409)
             print("PASS HTTP: next incident recalls scope; forgetting removes content and suppresses replay")
-            request("/api/action", {"action": "advance", "minutes": 1}, expected=403, headers={"Origin": "https://unrelated.example"})
-            request("/api/package", {"schemaVersion": 1, "workflow": "bad"}, expected=400)
-            request("/api/action", {"action": "replan", "revision": 999}, expected=409)
+            request("/demo/action", {"action": "advance", "minutes": 1}, expected=403, headers={"Origin": "https://unrelated.example"})
+            request("/hooks/assignments", {"schemaVersion": 1, "workflow": "bad"}, expected=400)
+            request("/demo/action", {"action": "replan", "revision": 999}, expected=409)
             print("PASS HTTP: cross-origin writes, malformed input and stale revisions rejected")
             state = action("cancel", revision=state["package"]["revision"])
             assert state["incidentStatus"] == "cancelled"

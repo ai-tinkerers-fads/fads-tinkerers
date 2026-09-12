@@ -138,8 +138,8 @@ tests. Close the instance after use. SQLite transactions serialize mutations.
 | `record_outcome(...)`, `estimate(...)` | Record independent actuals and derive task-type estimates. |
 | `forget_lesson(...)`, `forget_outcome(...)` | Remove content/contributions and suppress replay of the same source. |
 
-The loopback demo exposes `GET /health`, `GET /api/state`,
-`POST /api/package` (the complete JSON fixture shape), and `POST /api/action`.
+The loopback demo exposes `GET /health`, `GET /demo/state`,
+`POST /hooks/assignments` (the complete JSON fixture shape), and `POST /demo/action`.
 Actions are `advance`, `acknowledge`, `snooze`, `complete`, `replan`, `cancel`,
 `delay_driver`, `remember`, `forget_lesson`, `forget_outcome`, `seed_history`,
 and `next_incident`. `complete`, `replan`, `cancel`, and `delay_driver` require
@@ -231,3 +231,24 @@ for settings writes. Validation, idempotency, transactions, and revision checks
 are retained. At the Phase 1 commit, core.py fell from 592 to 591 lines and
 demo.py from 232 to 231; all existing behavior tests passed. Later phases use
 small standard-library functions and review for unnecessary abstractions.
+
+## Local transport details
+
+Assignment writes include `callerId` alongside the existing package fields;
+other administrative writes use `callerId` or the named `confirmedBy` field.
+Employee hooks carry `employeeId` matching the path/assignment. GET hooks use
+`?callerId=fixture-reader`. Workspace is bound by the host (the demo uses its
+fixture workspace); it is not selected by an untrusted URL. A real host must
+authenticate these identities. Routes outside `/hooks/` are optional `/demo/`
+controls; the old `/api/` routes are removed.
+
+Webhook push is disabled unless both environment variables are set. For this
+fixture-only implementation, only `http://127.0.0.1:<port>/<path>` is accepted;
+redirects are not followed. Headers are `X-FADS-Timestamp` (Unix seconds),
+`X-FADS-Signature: sha256=<hex HMAC(secret, timestamp + "." + exact JSON bytes)>`,
+and `Idempotency-Key` (package id). Receivers must verify signatures, freshness,
+and ids. 2xx is accepted; 5xx retries at most three total attempts with 2/4-second
+delays; other HTTP responses fail. Timeout, connection uncertainty, or a crash
+while sending remains `unknown` and requires host reconciliation, never a blind
+resend. Acceptance is not proof of downstream processing. Delivery state lives
+in `webhook_deliveries`; polling is always available independently of push.

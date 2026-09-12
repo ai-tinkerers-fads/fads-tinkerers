@@ -10,7 +10,6 @@ import json
 import math
 import sqlite3
 import statistics
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -217,6 +216,12 @@ class Coordination:
             PRIMARY KEY(workspace,source_id));
         CREATE TABLE IF NOT EXISTS suppressed (
             workspace TEXT, kind TEXT, source_id TEXT, PRIMARY KEY(workspace,kind,source_id));
+        CREATE TABLE IF NOT EXISTS outbox (
+            cursor INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, type TEXT,
+            workspace TEXT, incident TEXT, revision INTEGER, body TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS webhook_deliveries (
+            package_id TEXT PRIMARY KEY REFERENCES outbox(id), attempt INTEGER DEFAULT 0,
+            state TEXT DEFAULT 'queued', provider_response_id TEXT, next_at TEXT);
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
         """)
 
@@ -273,6 +278,7 @@ class Coordination:
                     profile = json.loads(prior[0])
             self.db.execute("INSERT INTO forecasts VALUES (?,?,?,?,?)", (workspace, incident, task["id"], package["revision"], canonical(profile)))
         self._refresh(package, now)
+        self.publish_schedule(package, now)
 
     def replan(self, workspace, incident, now, expected_revision):
         with self.db:
@@ -426,9 +432,41 @@ class Coordination:
                 # notification history, so forgetting a note actually removes it.
                 # The simulated inbox and send receipt commit together. This is
                 # intentionally NOT a remote sender with exactly-once claims.
-                self.db.execute("INSERT OR IGNORE INTO notifications VALUES (?,?,?,?,?,?)", (str(uuid.uuid4()), reminder["id"], workspace, reminder["employee"], body, iso(now)))
+                self.emit(package, "reminder", {"employeeId": reminder["employee"], "reminderId": reminder["id"],
+                          "kind": reminder["kind"], "taskId": reminder["task"], "dueAt": reminder["due_at"], "text": body,
+                          "acknowledgeUrl": f"/hooks/reminders/{reminder['id']}/acknowledge",
+                          "snoozeUrl": f"/hooks/reminders/{reminder['id']}/snooze"}, now, reminder["id"])
                 self.db.execute("UPDATE reminders SET status='delivered' WHERE id=?", (reminder["id"],))
         return self.state(workspace, incident, now)
+
+    def emit(self, package, kind, body, now, identity=None):
+        workspace, incident, revision = package["workspaceId"], package["incident"]["id"], package["revision"]
+        item_id = key(workspace, incident, revision, kind, identity if identity is not None else body)
+        item = {"type": kind, "id": item_id, "createdAt": iso(now), "workspaceId": workspace,
+                "incidentId": incident, "revision": revision, "body": body}
+        self.db.execute("INSERT OR IGNORE INTO outbox(id,type,workspace,incident,revision,body,created_at) VALUES (?,?,?,?,?,?,?)",
+                        (item_id, kind, workspace, incident, revision, canonical(item), iso(now)))
+        self.db.execute("INSERT OR IGNORE INTO webhook_deliveries(package_id) VALUES (?)", (item_id,))
+        if kind == "reminder":
+            self.db.execute("INSERT OR IGNORE INTO notifications VALUES (?,?,?,?,?,?)",
+                            (item_id, body["reminderId"], workspace, body["employeeId"], body["text"], iso(now)))
+        return item
+
+    def publish_schedule(self, package, now):
+        for task in self.plan(package, now):
+            body = {field: task[field] for field in ("employeeId", "taskId", "name", "startAt", "endAt", "prepareAt", "dependsOn")}
+            body.update(location=package["incident"]["location"], state=task["state"], reason=task["reason"])
+            self.emit(package, "schedule_entry", body, now)
+
+    def outbox(self, workspace, after=0, types=None, limit=100):
+        number(after, "after", 0, 2**63-1)
+        number(limit, "limit", 1, 500)
+        clauses, args = ["workspace=?", "cursor>?"], [workspace, after]
+        if types:
+            clauses.append("type IN (" + ",".join("?" for _ in types) + ")")
+            args.extend(types)
+        rows = self.db.execute("SELECT cursor,body FROM outbox WHERE " + " AND ".join(clauses) + " ORDER BY cursor LIMIT ?", (*args, limit)).fetchall()
+        return {"items": [json.loads(r["body"]) for r in rows], "nextCursor": rows[-1]["cursor"] if rows else after}
 
     def _owned_reminder(self, workspace, reminder_id, employee):
         row = self.db.execute("SELECT * FROM reminders WHERE workspace=? AND id=? AND employee=?", (workspace, reminder_id, employee)).fetchone()

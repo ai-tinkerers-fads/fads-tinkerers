@@ -24,8 +24,8 @@ const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function time(value){return value?new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit',timeZone:state.package.timeZone}).format(new Date(value)):'Unscheduled'}
 function error(message){$('error').textContent=message||'';$('error').classList.toggle('hidden',!message)}
-async function act(data){if(busy)return;busy=true;error('');try{const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const result=await r.json();if(!r.ok)throw Error(result.error);state=result;render();return true}catch(e){error(e.message);return false}finally{busy=false}}
-async function refresh(){if(busy||document.querySelector('dialog[open]'))return;try{const r=await fetch('/api/state');if(!r.ok)throw Error('Unable to load state');state=await r.json();render()}catch(e){error(e.message)}}
+async function act(data){if(busy)return;busy=true;error('');try{const r=await fetch('/demo/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const result=await r.json();if(!r.ok)throw Error(result.error);state=result;render();return true}catch(e){error(e.message);return false}finally{busy=false}}
+async function refresh(){if(busy||document.querySelector('dialog[open]'))return;try{const r=await fetch('/demo/state');if(!r.ok)throw Error('Unable to load state');state=await r.json();render()}catch(e){error(e.message)}}
 function render(){
 const p=state.package, done=state.schedule.filter(t=>t.status==='complete').length;
 $('status').textContent='Local · simulated delivery';$('clock').textContent=new Intl.DateTimeFormat('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:p.timeZone}).format(new Date(state.now));$('incident-description').textContent=p.incident.location.address+' · '+p.incident.id;
