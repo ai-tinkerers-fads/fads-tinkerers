@@ -1,0 +1,5 @@
+import Link from "next/link";
+import { activeIncidents } from "@/src/db/store";
+
+export const dynamic="force-dynamic";
+export default function DispatchPage(){const incidents=activeIncidents();return <main><header className="masthead"><Link className="brand" href="/"><span>FADS</span> Dispatch</Link><span>{incidents.length} active incidents</span></header><section className="dispatch-page"><p className="eyebrow" style={{color:"#174f37"}}>Operations board</p><h1>Road incident queue</h1><div className="queue">{incidents.length===0?<div className="status-card">No active incidents.</div>:incidents.map((item)=><article key={item.id}><div><strong>{item.id} · {item.report.issueType.replaceAll("_"," ")}</strong><p>{item.report.address}</p><small>{item.progressMessage}</small></div><div><span className="pill">{item.status.replaceAll("_"," ")}</span>{item.queuePosition&&<p>Queue #{item.queuePosition}</p>}{item.ambiguousTaskId&&<a href={`https://app.ambiguous.ai/tasks/${item.ambiguousTaskId}`}>Open in Ambiguous</a>}</div></article>)}</div></section></main>}

@@ -216,4 +216,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# FADS local/runtime artifacts
+node_modules/
+.next/
+*.tsbuildinfo
+data/
+uploads/
 .ambi/
+.env*.local
+
+# Deepwork orchestration state
+.slim/deepwork/
+.slim/worktrees/
+.slim/worktrees.json
