@@ -219,6 +219,10 @@ class Coordination:
             PRIMARY KEY(workspace,source_id));
         CREATE TABLE IF NOT EXISTS suppressed (
             workspace TEXT, kind TEXT, source_id TEXT, PRIMARY KEY(workspace,kind,source_id));
+        CREATE TABLE IF NOT EXISTS workflows (
+            workspace TEXT, id TEXT, version INTEGER, graph TEXT, provenance TEXT,
+            status TEXT DEFAULT 'pending', confirmed_by TEXT, confirmed_at TEXT,
+            PRIMARY KEY(workspace,id,version));
         CREATE TABLE IF NOT EXISTS document_versions (
             workspace TEXT, source TEXT, digest TEXT, revision INTEGER,
             PRIMARY KEY(workspace,source,digest));
@@ -268,16 +272,17 @@ class Coordination:
                     assignment.update(json.loads(row["body"]))
         return package
 
-    def put_package(self, package, now):
+    def put_package(self, package, now, provenance=None):
         validate(package)
         stamp(now)
         with self.db:
             self._begin()
-            self._put(package, now)
+            self._put(package, now, provenance=provenance)
         return self.state(package["workspaceId"], package["incident"]["id"], now)
 
-    def _put(self, package, now, refresh_estimates=False, document_update=False):
+    def _put(self, package, now, refresh_estimates=False, document_update=False, provenance=None):
         workspace, incident = package["workspaceId"], package["incident"]["id"]
+        self.register_workflow(package, now, provenance)
         old = self.get_package(workspace, incident)
         before = {t["taskId"]: t for t in self.plan(self._package(workspace, incident), now)} if old else {}
         if any(a["status"] == "complete" and stamp(a["completedAt"]) > stamp(now) for a in package["assignments"]):
@@ -318,7 +323,37 @@ class Coordination:
         self._refresh(effective, now)
         self.publish_schedule(effective, now)
 
-    def put_document(self, package, source, digest, now):
+    def register_workflow(self, package, now, provenance=None):
+        workflow = package["workflow"]
+        identity = (package["workspaceId"], workflow["id"], workflow["version"])
+        graph = canonical({k: v for k, v in workflow.items() if k != "provenance"})
+        old = self.db.execute("SELECT graph FROM workflows WHERE workspace=? AND id=? AND version=?", identity).fetchone()
+        if old:
+            if old[0] != graph:
+                raise Conflict("Change the workflow version when changing its approved definition")
+            return
+        provenance = dict(provenance or {"createdBy": "local-fixture", "sourceRef": package["incident"]["id"], "howBuilt": "Supplied assignment package"})
+        provenance["createdAt"] = iso(now)
+        self.db.execute("INSERT INTO workflows(workspace,id,version,graph,provenance) VALUES (?,?,?,?,?)", (*identity, graph, canonical(provenance)))
+
+    def confirm_workflow(self, workspace, workflow, version, confirmed_by, now):
+        required({"confirmedBy": confirmed_by}, "confirmedBy")
+        number(version, "workflow.version", 1)
+        with self.db:
+            self._begin()
+            row = self.db.execute("SELECT * FROM workflows WHERE workspace=? AND id=? AND version=?", (workspace, workflow, version)).fetchone()
+            if row is None:
+                raise InvalidInput("Unknown catalog workflow")
+            if row["status"] == "pending":
+                self.db.execute("UPDATE workflows SET status='active',confirmed_by=?,confirmed_at=? WHERE workspace=? AND id=? AND version=?", (confirmed_by, iso(now), workspace, workflow, version))
+            return self.workflow_catalog(workspace, workflow, version)[0]
+
+    def workflow_catalog(self, workspace, workflow=None, version=None):
+        rows = self.db.execute("SELECT * FROM workflows WHERE workspace=? AND (? IS NULL OR id=?) AND (? IS NULL OR version=?) ORDER BY id,version", (workspace, workflow, workflow, version, version))
+        return [{"id": r["id"], "version": r["version"], "status": r["status"], "graph": json.loads(r["graph"]),
+                 "provenance": json.loads(r["provenance"]), "confirmedBy": r["confirmed_by"], "confirmedAt": r["confirmed_at"]} for r in rows]
+
+    def put_document(self, package, source, digest, now, caller="fixture-import"):
         validate(package)
         workspace, incident = package["workspaceId"], package["incident"]["id"]
         with self.db:
@@ -332,7 +367,7 @@ class Coordination:
                 raise Conflict("Historical document revision; use a new source snapshot")
             # Hash revisions are identities, not clocks. Only this trusted local
             # adapter may replace a different hash; regular package checks remain.
-            self._put(package, now, document_update=True)
+            self._put(package, now, document_update=True, provenance={"createdBy": caller, "sourceRef": source, "howBuilt": "Explicit fixture field map", "documentRevision": digest})
             self.db.execute("INSERT OR IGNORE INTO document_versions VALUES (?,?,?,?)", (workspace, source, digest, package["revision"]))
         return self.state(workspace, incident, now)
 
@@ -869,6 +904,7 @@ class Coordination:
         return {"demo": True, "now": iso(now), "package": package, "incidentStatus": incident_status,
                 "estimatedResolutionAt": max(t["endAt"] for t in schedule) if all(t["endAt"] for t in schedule) else None,
                 "schedule": schedule, "reminders": reminders,
+                "workflows": self.workflow_catalog(workspace),
                 "proofs": [dict(r) for r in self.db.execute("SELECT task AS taskId,employee AS employeeId,kind,ref,sha256,note,received_at AS receivedAt FROM proofs WHERE workspace=? AND incident=?", (workspace, incident))],
                 "notifications": [{"id": n["id"], "reminderId": n["reminder_id"], "employeeId": n["employee"], "taskId": n["task"], "kind": n["kind"], "body": n["body"], "createdAt": n["created_at"], "status": n["status"], "delivery": "simulated_in_app"} for n in notes],
                 "lessons": [dict(r) for r in self.db.execute("SELECT * FROM lessons WHERE workspace=? ORDER BY updated_at DESC", (workspace,))],

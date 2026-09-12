@@ -321,3 +321,17 @@ the current hash is a no-op; replaying an older imported hash is rejected.
 Consumers order changes by outbox cursor. Only tasks whose assignments or
 schedule actually changed have reminders superseded; unchanged reminder IDs
 and acknowledgement state carry forward to the new revision.
+
+## Workflow catalog
+
+A previously unseen workspace/id/version is recorded once as `pending`, with
+the supplied graph and first-registration provenance (`createdBy`, `createdAt`,
+`sourceRef`, `howBuilt`). These identify the importing caller and registration
+time, not an inferred original author. Explicit field-map imports also retain
+the source digest. Confirmation records the first `confirmedBy` and timestamp
+and activates the entry; repeat confirmation returns that original record.
+The catalog is included in the state snapshot. Pending catalog review does not
+undo already confirmed assignments: this module does not choose workflows.
+Changed definitions under an existing version are rejected across incidents.
+Existing demo databases backfill entries with clearly labelled migration
+provenance; other hosts can replay their current package to register it.

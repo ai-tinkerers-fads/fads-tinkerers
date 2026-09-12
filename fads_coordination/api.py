@@ -79,7 +79,7 @@ class Hooks:
             package, digest = load_document(source, data.get("fieldMap"))
             if package["workspaceId"] != self.workspace:
                 raise InvalidInput("Workspace does not match host context")
-            result = self.app.put_document(package, canonical(source), digest, self.now)
+            result = self.app.put_document(package, canonical(source), digest, self.now, data["callerId"])
             result["documentRevision"] = digest
             return result
         if path == "/hooks/assignments":
@@ -87,8 +87,10 @@ class Hooks:
             package = {k: v for k, v in data.items() if k != "callerId"}
             if package.get("workspaceId") != self.workspace:
                 raise InvalidInput("Workspace does not match host context")
-            return self.app.put_package(package, self.now)
+            return self.app.put_package(package, self.now, {"createdBy": data["callerId"], "sourceRef": "assignment-hook:" + package["incident"]["id"], "howBuilt": "Supplied confirmed assignment"})
         parts = [unquote(part) for part in path.strip("/").split("/")]
+        if len(parts) == 5 and parts[:2] == ["hooks", "workflows"] and parts[4] == "confirm":
+            return self.app.confirm_workflow(self.workspace, parts[2], int(parts[3]), required(data, "confirmedBy"), self.now)
         if len(parts) == 5 and parts[:2] == ["hooks", "tasks"]:
             if parts[4] == "done":
                 return self.app.done(self.workspace, parts[2], parts[3], data, self.now)

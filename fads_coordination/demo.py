@@ -28,6 +28,10 @@ def set_values(app, **values):
 def initialize(path):
     app = Coordination(path)
     try:
+        with app.db:
+            for row in app.db.execute("SELECT body FROM packages").fetchall():
+                package = json.loads(row[0])
+                app.register_workflow(package, datetime.now().astimezone(), {"createdBy": "demo-migration", "sourceRef": package["incident"]["id"], "howBuilt": "Backfilled from saved local fixture; original creation time unknown"})
         if "incident" not in settings(app):
             package = json.loads(FIXTURE.read_text())
             app.put_package(package, stamp(package["startAt"]))

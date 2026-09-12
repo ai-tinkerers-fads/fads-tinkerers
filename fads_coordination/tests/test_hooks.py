@@ -268,3 +268,37 @@ class HookTests(unittest.TestCase):
         del mapping['assignments']['employeeId']
         with self.assertRaisesRegex(InvalidInput,'assignments.employeeId'):
             map_rows(rows,mapping,source)
+
+    def test_phase6_pending_catalog_confirmation_and_immutable_version(self):
+        self.load()
+        catalog=self.app.workflow_catalog(self.ws)
+        self.assertEqual(1,len(catalog))
+        self.assertEqual('pending',catalog[0]['status'])
+        self.assertEqual('fixture-dispatcher',catalog[0]['provenance']['createdBy'])
+        self.assertIn('createdAt',catalog[0]['provenance'])
+        self.assertIn('sourceRef',catalog[0]['provenance'])
+        self.assertIn('howBuilt',catalog[0]['provenance'])
+        route='/hooks/workflows/branch-removal/1/confirm'
+        first=self.hooks.post(route,{'confirmedBy':'fixture-reviewer'})
+        self.assertEqual('active',first['status'])
+        self.assertEqual(first,self.hooks.post(route,{'confirmedBy':'second-reviewer'}))
+        self.load()
+        self.assertEqual(1,len(self.app.workflow_catalog(self.ws)))
+        self.package['incident']['id']='different-case'
+        for a in self.package['assignments']:
+            a['incidentId']='different-case'
+        self.package['workflow']['tasks'][0]['estimatedMinutes']=11
+        with self.assertRaises(Conflict):
+            self.load()
+        self.assertIsNone(self.app.get_package(self.ws,'different-case'))
+        self.package['workflow']['version']=2
+        self.load()
+        self.assertEqual(['active','pending'],[w['status'] for w in self.app.workflow_catalog(self.ws)])
+
+    def test_phase6_catalog_workspace_and_confirmation_guards(self):
+        self.load()
+        with self.assertRaises(InvalidInput):
+            self.hooks.post('/hooks/workflows/branch-removal/1/confirm',{})
+        with self.assertRaises(InvalidInput):
+            self.app.confirm_workflow('another-workspace','branch-removal',1,'reviewer',self.now)
+        self.assertEqual('pending',self.app.workflow_catalog(self.ws)[0]['status'])
