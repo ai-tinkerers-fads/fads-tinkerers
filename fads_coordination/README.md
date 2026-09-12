@@ -70,6 +70,8 @@ python3 -m fads_coordination.demo
 python3 -m unittest discover -s fads_coordination/tests -v
 python3 fads_coordination/scripts/smoke_coordination.py
 python3 fads_coordination/scripts/smoke_hooks.py
+# Optional JavaScript unit checks, using Node built-ins only:
+node fads_coordination/tests/test_service_worker.cjs
 ```
 
 Open [the local workboard](http://127.0.0.1:8787). `--port` and `--db` select an
@@ -86,6 +88,15 @@ The optional `demo.py` mounts `/`, `/demo/state`, `/demo/action`, and
 parts live beside them: `web/`, `fixtures/`, `tests/`, and `scripts/`.
 
 ## Actionable employee notifications
+
+After enabling notifications once, **Reset testing** sends Alex a notification
+directly from the dispatcher. **Send notification** sends it again without
+resetting data; the employee page also has this button for its own employee.
+These explicit demo triggers do not require another receiver tab to be open.
+They report service-worker/browser failures on the page and use `renotify` so
+repeated test clicks alert again. Browser acceptance of the notification does
+not prove that the OS displayed a banner. Open web opens a new employee tab.
+
 
 Open [Alex’s employee page](http://127.0.0.1:8787/web/employee.html?employeeId=alex)
 or [Sam’s page](http://127.0.0.1:8787/web/employee.html?employeeId=sam) from the
@@ -115,7 +126,9 @@ supporting only two actions gets Open web and Accept. All actions, including
 Snooze and Delay, remain on the card.
 macOS controls banner presentation and may reveal actions only on hover;
 the website cannot force an always-visible native button. A plain
-click opens/focuses the package card on the existing employee page. Delay
+click opens/focuses the package card on the existing employee page. The worker
+opens and focuses a new employee tab directly from the notification click. Dispatcher/employee navigation
+links open another tab so the live notification receiver stays open. Delay
 resolve links add `action=delay` and open the note form. Errors open the employee page with
 the server’s explanation. The worker uses package IDs as notification tags.
 
