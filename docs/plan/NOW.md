@@ -13,6 +13,8 @@ assignment; task coordination; and a resident-visible resolution estimate.
 - Use a web page as the initial resident reporting channel, accepting typed
   text, image upload, and voice-note upload.
 - Use fixture employees, calendars, equipment, and incidents for the demo.
+- Link the existing Ambiguous workspace members to **simulated** field crew
+  profiles, so OpenClaw can assign visible tasks to real workspace accounts.
 - Start with fallen branches, potholes, and vehicle/debris removal as the only
   workflow types.
 - A human dispatcher can override every classification, assignment, and ETA.
@@ -35,12 +37,13 @@ assignment; task coordination; and a resident-visible resolution estimate.
 1. Confirm the branch-blockage demo in [DEMO.md](DEMO.md).
 2. Create fixture data for employees, capabilities, schedules, equipment, and
    three incidents.
-3. Implement resident report intake: text, image, voice note, and location.
-4. Normalize/transcribe incoming inputs and route the evidence bundle to the agent.
-5. Encode the three predefined workflows and their required roles/tasks.
-6. Implement classification → workflow selection → crew assignment.
-7. Build dispatcher and resident status views, including rationale and ETA.
-8. Demonstrate task progression through verification and resolution.
+3. Confirm each workspace member's simulated crew profile in [REPORTS.md](REPORTS.md).
+4. Implement resident report intake: text, image, voice note, and location.
+5. Normalize/transcribe incoming inputs and route the evidence bundle to the agent.
+6. Encode the three predefined workflows and their required roles/tasks.
+7. Implement classification → workflow selection → crew assignment.
+8. Build dispatcher and resident status views, including rationale and ETA.
+9. Demonstrate task progression through verification and resolution.
 
 ## Team update format
 
