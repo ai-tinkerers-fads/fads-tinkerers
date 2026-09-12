@@ -151,7 +151,8 @@ def main():
             reset = request("/demo/reset", {"callerId":"fixture-tester"})
             assert reset["package"]["revision"] == 1 and reset["incidentStatus"] == "assigned"
             assert not reset["outcomes"] and not reset["proofs"]
-            assert len(request(f"/hooks/outbox?callerId=fixture-reader&after={latest}")["items"]) == 6
+            restored = request(f"/hooks/outbox?callerId=fixture-reader&after={latest}&types=schedule_entry,reminder")["items"]
+            assert len(restored) == 6, [i["type"] for i in restored]  # five schedule entries plus the first ready reminder
             print("PASS FIXTURE reset: cleared local test state and memory, restored fixture, retained forward cursor")
             print("PASS PHASE 7: complete fixture/local-sink hook walkthrough; no external service calls")
         finally:
