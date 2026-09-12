@@ -4,41 +4,40 @@ Last updated: 2026-09-12
 
 ## Current goal
 
-Build the thinnest end-to-end shared-memory demo: two input channels, common
-context in Ambiguous, OpenClaw coordination, and a web workspace explaining
-what the team knows and why.
+Build the thinnest end-to-end coordination demo: two input channels, one
+normalized event stream, and a grounded "needs attention" view.
 
 ## Working assumptions
 
-- Demonstrate Slack and email first; use read-only APIs when quick, otherwise
-  use clearly labeled fixtures.
-- Use Ambiguous for the shared-memory/context layer, subject to its available
-  API and integration model.
-- Use OpenClaw for adapter orchestration, retrieval, and context updates.
-- Include one multimodal input: voice transcript or image with extracted
-  context.
-- Never send messages or modify source data in the prototype.
+- Start with Slack and email as the two demonstrated sources.
+- Use real read-only integrations only if credentials and setup are quick;
+  otherwise use clearly labeled fixture data that resembles the real schema.
+- Treat Ambiguous.ai and other sources as follow-on adapters, not demo
+  dependencies.
+- The application never sends messages or modifies source data.
 
-## Decisions to make
+## Next decisions
 
 | Decision | Suggested default | Owner | Status |
 | --- | --- | --- | --- |
 | Demo sources | Slack + email | Unassigned | Open |
-| Shared-memory contract | Context records with provenance/history | Unassigned | Open |
-| Multimodal input | Voice transcript or image | Unassigned | Open |
-| Main surface | Shared context + timeline + evidence drawer | Unassigned | Open |
-| Deployment | Local first | Unassigned | Open |
+| Integration approach | Read-only APIs; fixtures as fallback | Unassigned | Open |
+| Normalized event schema | One `ActivityEvent` contract | Unassigned | Open |
+| Main demo surface | Timeline + attention queue + evidence drawer | Unassigned | Open |
+| Deployment approach | Local first; hosted only if time remains | Unassigned | Open |
 
 ## Immediate work queue
 
-1. Confirm the demo narrative in [DEMO.md](DEMO.md).
-2. Validate Ambiguous and OpenClaw integration paths.
-3. Define common source-event and memory contracts.
-4. Build the runnable web-app skeleton.
-5. Implement one source adapter, one multimodal path, and fixture fallbacks.
-6. Make every memory record and generated claim traceable to evidence.
+1. Agree on the demo story in [DEMO.md](DEMO.md).
+2. Define the smallest normalized event schema in [INTEGRATIONS.md](INTEGRATIONS.md).
+3. Pick the application stack and create the runnable skeleton.
+4. Implement one source adapter and fixture fallback.
+5. Build the shared timeline, then the attention queue.
+6. Add an evidence path from every generated claim back to source events.
 
-## Team update format
+## Team check-in template
+
+Post a short update whenever a meaningful change lands:
 
 ```text
 Done: …
@@ -47,5 +46,5 @@ Blocked by: …
 Decision needed: …
 ```
 
-Use this page for current intent; record settled choices in
-[DECISIONS.md](DECISIONS.md).
+Keep this file to current intent and blockers. Record settled choices in
+[DECISIONS.md](DECISIONS.md), not here.

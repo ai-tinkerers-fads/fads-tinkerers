@@ -1,50 +1,44 @@
 # Decisions
 
-Short, dated choices for shared context—not a heavyweight approval process.
+Use one short entry per material choice. The goal is shared context, not a
+formal approval process.
 
 ## Template
 
 ```md
-## YYYY-MM-DD — Title
+## YYYY-MM-DD — Decision title
 
 **Decision:** What we chose.
-**Why:** Constraints and rationale.
+
+**Why:** Brief rationale and constraints.
+
 **Consequences:** What this unlocks or gives up.
+
 **Owner:** Name or `team`.
 ```
 
-## 2026-09-12 — Shared memory is the product center
+## 2026-09-12 — Optimize for a narrow, grounded coordination demo
 
-**Decision:** FADS will organize around inspectable common context rather than
-only a unified inbox or activity timeline.
+**Decision:** The first demo will focus on two sources, a normalized activity
+stream, an attention queue, and evidence back to the original items.
 
-**Why:** The core value is for people and integrations to share durable context
-across modalities.
+**Why:** This proves the coordination value without spending the weekend on
+many integrations or unsupervised agent behavior.
 
-**Consequences:** Every derived record needs provenance and update history.
-
-**Owner:** team
-
-## 2026-09-12 — OpenClaw coordinates; Ambiguous holds context
-
-**Decision:** Use OpenClaw as the coordinating backend and Ambiguous as the
-shared-memory/context layer, subject to integration validation.
-
-**Why:** This creates a clean separation between orchestration and durable
-team knowledge.
-
-**Consequences:** Confirm both systems' available APIs before locking UI or
-adapter architecture.
+**Consequences:** Additional modalities are represented as adapter candidates,
+not required demo scope.
 
 **Owner:** team
 
-## 2026-09-12 — Prototype stays read-only toward source systems
+## 2026-09-12 — Keep source systems read-only
 
-**Decision:** FADS may propose shared-memory updates, but it will not send,
-reply, or edit connected source systems during the hackathon demo.
+**Decision:** FADS will summarize and suggest actions, but will not send,
+reply, or edit data in connected systems for the hackathon build.
 
-**Why:** This keeps the demo safe, trustworthy, and achievable.
+**Why:** Read-only access lowers setup, safety, and trust costs while keeping
+the core product idea visible.
 
-**Consequences:** The demo ends with a human-reviewed recommendation.
+**Consequences:** The demo ends with a proposed next action, rather than an
+autonomous action.
 
 **Owner:** team

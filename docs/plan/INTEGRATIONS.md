@@ -1,68 +1,60 @@
 # Integration map
 
-## System roles
+## Adapter contract
 
-| Component | Role |
-| --- | --- |
-| Ambiguous | Shared-memory/context layer: retains and retrieves team context. |
-| OpenClaw | Coordinator: runs adapters, queries memory, performs grounded reasoning, and records attributable context updates. |
-| Web app | Human-facing workspace: context, timeline, evidence, and reviewable updates. |
-| Source adapters | Translate Slack, email, voice, images, and future sources into common contracts. |
-
-## Source-event contract
+Each source adapter converts source records into a common `ActivityEvent`.
+Keep the original payload or a stable source reference outside the generated
+summary so users can inspect evidence.
 
 ```ts
 type ActivityEvent = {
-  id: string; // stable: `${source}:${sourceRecordId}`
-  source: "slack" | "email" | "voice" | "image" | "other";
+  id: string;                 // stable: `${source}:${sourceRecordId}`
+  source: "slack" | "email" | "ambiguous" | "other";
   sourceRecordId: string;
-  occurredAt: string; // ISO 8601 UTC
-  author?: { id?: string; name: string };
+  occurredAt: string;         // ISO 8601 UTC
+  author: { id?: string; name: string };
   participants?: string[];
-  text?: string;
+  text: string;
   threadId?: string;
   permalink?: string;
-  inputReference?: string; // audio/image reference where applicable
   metadata?: Record<string, unknown>;
 };
 ```
-
-## Shared-memory contract
-
-```ts
-type ContextRecord = {
-  id: string;
-  type: "fact" | "decision" | "ask" | "blocker" | "person" | "artifact";
-  statement: string;
-  status?: "active" | "resolved" | "superseded" | "uncertain";
-  evidenceEventIds: string[];
-  createdAt: string;
-  updatedAt: string;
-  updatedBy: { kind: "person" | "integration" | "coordinator"; id: string };
-  sourceReferences?: string[];
-};
-```
-
-Every write should retain the actor, time, change, and supporting evidence.
-Connectors may query common context; their proposed updates must be visible and
-reversible in the web app.
 
 ## Source status
 
 | Source | Demo role | Access strategy | Status | Notes |
 | --- | --- | --- | --- | --- |
-| Slack | Primary | Read-only API or fixtures | Planned | Preserve channel, thread, author, timestamp, permalink. |
-| Email | Primary | Read-only provider API or fixtures | Planned | Preserve sender, recipients, subject, time, thread, reference. |
-| Voice | Multimodal | Record/upload or fixture transcript | Planned | Retain audio/reference, transcript, speaker/time if available. |
-| Images / vision | Multimodal | Upload or fixture image + description | Planned | Retain image reference; label extracted information as derived. |
-| Ambiguous | Shared memory | Validate API/integration | Planned | Confirm create, retrieve, update, provenance, deletion. |
-| OpenClaw | Coordinator | Validate backend interface | Planned | Confirm adapter, retrieval, and update interfaces. |
+| Slack | Primary source | Read-only API or labeled fixtures | Planned | Preserve channel, thread, author, timestamp, permalink. |
+| Email | Primary source | Read-only provider API or labeled fixtures | Planned | Preserve sender, recipients, subject, time, thread, link/reference. |
+| Ambiguous.ai | Candidate adapter | Investigate later | Deferred | Do not make this a critical path before the two-source flow works. |
+| Other tools | Candidate adapters | Contract + fixtures first | Deferred | Add only when a clear demo benefit exceeds setup cost. |
 
-## Rules
+## Ingestion rules
 
-- Keep source systems read-only for this prototype.
+- Source data is read-only for this prototype.
 - Normalize timestamps to UTC; render in the viewer’s locale.
-- Retain a source reference for every event and input type for every multimodal
-  event.
-- Label extracted or model-inferred information as derived, with evidence.
-- Do not store secrets or raw private data in the repository.
+- Retain a source reference for every event.
+- Do not invent authors, timestamps, or source links when using fixtures.
+- Make fixture mode visible in the UI.
+- Avoid storing secrets or raw private data in the repository.
+
+## Attention-item contract
+
+Derived items should retain their evidence rather than become detached LLM
+claims.
+
+```ts
+type AttentionItem = {
+  id: string;
+  kind: "ask" | "decision" | "blocker" | "follow_up";
+  title: string;
+  summary: string;
+  suggestedNextStep?: string;
+  evidenceEventIds: string[];
+  confidence?: "high" | "medium" | "low";
+};
+```
+
+An attention item without at least one evidence event should not be shown as a
+fact; at most, present it as an explicitly labeled hypothesis.

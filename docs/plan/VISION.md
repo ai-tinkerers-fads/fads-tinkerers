@@ -2,52 +2,45 @@
 
 ## One sentence
 
-FADS gives a team shared, multimodal memory: information from tools,
-conversations, voice, and visual inputs becomes common context that people and
-integrations can safely find, understand, and update.
+FADS is a lightweight coordination layer that turns fragmented conversations
+and requests across work tools into a clear, shared answer to: **what needs
+attention, why, and who can move it forward?**
 
 ## Problem
 
-Work context is fragmented. A decision can begin in Slack, an ask can arrive
-by email, a useful detail can be spoken aloud, and supporting evidence can sit
-inside an image. Each tool has a partial view; the team has no durable shared
-context across them.
+Work context is fragmented. A decision may begin in Slack, an ask may arrive
+by email, and the relevant follow-up may live in another AI or work tool.
+People lose time reconstructing the story, duplicate work, and miss requests
+whose ownership was implicit rather than explicit.
 
-## Product shape
+## First user
 
-- **Shared memory:** Ambiguous stores or indexes durable, source-grounded team
-  context: facts, decisions, asks, relationships, and updates.
-- **Coordinator:** OpenClaw coordinates ingestion, retrieval, reasoning, and
-  scoped updates between integrations and shared memory.
-- **Web workspace:** a transparent page showing current context, evidence,
-  activity timeline, open items, and connected sources.
-- **Multimodal inputs:** text, voice, images, and other visual inputs can add
-  context with their input type and provenance retained.
-- **Two-way integrations:** connected tools can query common context and, when
-  authorized, propose or make attributable, reversible updates.
+A small team coordinating a fast-moving project across at least two channels.
+They need a quick orientation rather than another inbox: current activity,
+open asks, decision context, and suggested next moves.
 
 ## Weekend outcome
 
-Demonstrate a shared-memory loop that:
+Demonstrate a trustworthy coordination view that:
 
-1. ingests Slack-like messages and email-like messages into common context;
-2. displays that context and source evidence in a web workspace;
-3. uses OpenClaw to retrieve grounded context for an open ask, decision, or
-   blocker; and
-4. accepts a voice transcript or image and visibly incorporates its evidence.
+1. brings Slack-like messages and email-like messages into a shared timeline;
+2. preserves source links and enough context to inspect each item;
+3. identifies a small number of open asks, decisions, or blockers; and
+4. explains the evidence behind each summary or suggested action.
 
-## Principles
+## Product principles
 
-- **Source-first:** retain provenance, timestamps, participants, and links.
-- **Inspectable memory:** users can see what was remembered, why, and when it
-  changed.
-- **Human-controlled:** updates are visible, attributable, and reversible; the
-  demo does not send messages or edit source systems.
-- **Useful before complete:** a dependable small flow beats a broad, brittle
-  integration surface.
+- **Source-first.** Keep provenance, timestamps, participants, and links.
+- **Useful before complete.** A narrow, reliable two-source flow beats broad
+  but brittle integrations.
+- **Human stays in control.** Suggest and summarize; do not send, reply, or
+  change anything in a connected tool during the demo.
+- **Reversible by default.** Ingestion and analysis should be safe to rerun.
+- **Legible reasoning.** A user can see what messages led to a conclusion.
 
-## Non-goals
+## Non-goals for the hackathon
 
-- Replacing Slack, email, or project-management tools.
-- A universal integration platform or perfect historical backfill.
-- Fully autonomous external communications.
+- Replacing Slack, email, or a project-management system.
+- Building a universal integration platform.
+- Fully autonomous agents that communicate externally.
+- Perfect entity resolution, permissions, or historical backfill.
