@@ -15,6 +15,7 @@ export interface AmbiguousPort {
   updateComment(taskId: string, commentId: string, content: string): Promise<void>;
   listActivity(taskId: string): Promise<readonly { action?: string; userId?: string; createdAt?: string }[]>;
   createDocument(title: string, markdown: string): Promise<{ id: string }>;
+  updateDocument(id: string, markdown: string): Promise<void>;
   listCalendars(): Promise<readonly { id: string; name: string }[]>;
   getAvailability(userIds: readonly string[], start: string, end: string): Promise<Record<string, readonly BusyInterval[]>>;
   listResources(): Promise<readonly { id: string; name: string }[]>;

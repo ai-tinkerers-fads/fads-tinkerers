@@ -112,6 +112,12 @@ export class AmbiguousClient implements AmbiguousPort {
   async createDocument(title: string, markdown: string): Promise<{ id: string }> {
     return this.request<{ id: string }>("/api/documents", { method: "POST", body: JSON.stringify({ type: "doc", title, content: markdown, visibility: "workspace" }) });
   }
+  async updateDocument(id: string, markdown: string): Promise<void> {
+    await this.request(`/api/documents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ content: markdown }),
+    });
+  }
 
   async listCalendars(): Promise<readonly { id: string; name: string }[]> {
     const result = await this.request<{ data: Array<{ id: string; name: string }> }>("/api/calendars");

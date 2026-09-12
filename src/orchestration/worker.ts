@@ -6,6 +6,12 @@ import type { ConfidenceBand, EquipmentUnit, ProposedPlan } from "@/src/contract
 import { activeIncidents, incidentById, updateIncident, type StoredIncident } from "@/src/db/store";
 import { planIncident } from "@/src/planning/planner";
 import { ambiguousConfig } from "./config";
+import {
+  renderEventDescription,
+  renderIncidentDescription,
+  renderWorkflowSubtaskDescription,
+  renderWorkPackage,
+} from "./artifacts";
 
 const execFileAsync = promisify(execFile);
 
@@ -49,35 +55,6 @@ async function verifyEvidence(incident: StoredIncident): Promise<Verification> {
   }
 }
 
-function workPackage(incident: StoredIncident, verification: Verification, plan: ProposedPlan): string {
-  const workflow = WORKFLOWS[incident.report.issueType];
-  const checklist = plan.tasks.map((task, index) =>
-    `${index + 1}. **${task.title}** — ${task.crewMemberName} — ${task.startAt} to ${task.endAt}\n   - Equipment: ${task.equipmentIds.join(", ") || "none"}`,
-  ).join("\n");
-  return `# Work Package — ${incident.id}
-
-## Report
-- **Location:** ${incident.report.address} (${incident.report.latitude}, ${incident.report.longitude})
-- **Resident-selected issue:** ${workflow.label}
-- **Evidence:** ${verification.summary}
-- **Confidence:** ${verification.confidence}
-
-## Proposed schedule
-- **Start:** ${plan.startAt}
-- **Expected completion:** ${plan.endAt}
-- **Status:** Tentative — dispatcher approval required
-
-## Crew and checklist
-${checklist}
-
-## Decision rationale
-${plan.rationale}
-
-## Approved references
-${workflow.approvedReferences.map((url) => `- ${url}`).join("\n")}
-
-> Demo plan only. A dispatcher must approve before field work.`;
-}
 
 async function writeProgress(client: AmbiguousClient, incident: StoredIncident, message: string): Promise<void> {
   if (!incident.ambiguousTaskId) return;
@@ -109,7 +86,7 @@ export async function processIncident(id: string): Promise<void> {
       const existing = await client.findTaskByMarker(marker);
       const task = existing ?? await client.createTask({
         title: `${incident.id} · ${WORKFLOWS[incident.report.issueType].label}`,
-        description: `${marker}\n\n**Demo resident:** ${incident.report.residentName}\n**Email:** ${incident.report.residentEmail}\n**Phone:** ${incident.report.residentPhone}\n**Location:** ${incident.report.address}\n**Coordinates:** ${incident.report.latitude}, ${incident.report.longitude}\n\n${incident.report.description ?? "No additional description."}`,
+        description: renderIncidentDescription(incident, marker),
         projectId: config.projectId,
         assigneeId: "e291aee4-3f6b-4f34-9860-6d9e7e26c802",
         statusId: config.statusIds?.reported,
@@ -158,13 +135,13 @@ export async function processIncident(id: string): Promise<void> {
       return;
     }
 
-    const document = await client.createDocument(`${incident.id} Work Package`, workPackage(incident, verification, result));
+    const document = await client.createDocument(`${incident.id} Work Package`, renderWorkPackage(incident, verification, result, equipment));
     updateIncident(id, { documentId: document.id });
     const subtaskIds: Record<string, string> = {};
     for (const [index, item] of result.tasks.entries()) {
       const subtask = await client.createSubtask(taskId, {
         title: item.title,
-        description: `${marker}\nPlanned: ${item.startAt} – ${item.endAt}\nProposed crew: ${item.crewMemberName}\nEquipment: ${item.equipmentIds.join(", ")}`,
+        description: renderWorkflowSubtaskDescription(incident, marker, item, equipment),
         estimatedMinutes: Math.round((Date.parse(item.endAt) - Date.parse(item.startAt)) / 60_000),
         sortOrder: index,
       });
@@ -181,7 +158,7 @@ export async function processIncident(id: string): Promise<void> {
       title: `Tentative · ${incident.id} · ${WORKFLOWS[incident.report.issueType].label}`,
       startAt: result.startAt,
       endAt: result.endAt,
-      description: `${marker}\nWork Package: https://app.ambiguous.ai/docs/${document.id}\nAwaiting dispatcher approval.`,
+      description: renderEventDescription(incident, marker, document.id),
       location: incident.report.address,
       attendeeIds: result.crewMemberIds,
       resourceIds: result.equipmentIds,
