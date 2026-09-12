@@ -1,0 +1,115 @@
+{
+  "package": {
+    "schemaVersion": {
+      "column": "Schema",
+      "type": "integer"
+    },
+    "workspaceId": {
+      "column": "Workspace",
+      "type": "text"
+    },
+    "startAt": {
+      "column": "Start",
+      "type": "text"
+    },
+    "timeZone": {
+      "column": "Zone",
+      "type": "text"
+    },
+    "context": {
+      "column": "Context",
+      "type": "text"
+    },
+    "incident.id": {
+      "column": "Case",
+      "type": "text"
+    },
+    "incident.location.address": {
+      "column": "Address",
+      "type": "text"
+    },
+    "incident.location.latitude": {
+      "column": "Latitude",
+      "type": "number"
+    },
+    "incident.location.longitude": {
+      "column": "Longitude",
+      "type": "number"
+    },
+    "workflow.id": {
+      "column": "Workflow",
+      "type": "text"
+    },
+    "workflow.version": {
+      "column": "Workflow version",
+      "type": "integer"
+    }
+  },
+  "tasks": {
+    "id": {
+      "column": "Step",
+      "type": "text"
+    },
+    "name": {
+      "column": "Step name",
+      "type": "text"
+    },
+    "requiredSkill": {
+      "column": "Skill",
+      "type": "text"
+    },
+    "requiredEquipment": {
+      "column": "Equipment",
+      "type": "json",
+      "optional": true
+    },
+    "estimatedMinutes": {
+      "column": "Minutes",
+      "type": "integer"
+    },
+    "dependsOn": {
+      "column": "Predecessors",
+      "type": "json"
+    }
+  },
+  "employees": {
+    "id": {
+      "column": "Worker",
+      "type": "text"
+    },
+    "name": {
+      "column": "Worker name",
+      "type": "text"
+    },
+    "skills": {
+      "column": "Worker skills",
+      "type": "json"
+    },
+    "equipmentAccess": {
+      "column": "Worker equipment",
+      "type": "json"
+    },
+    "availability": {
+      "column": "Work windows",
+      "type": "json"
+    }
+  },
+  "assignments": {
+    "incidentId": {
+      "column": "Assigned case",
+      "type": "text"
+    },
+    "taskId": {
+      "column": "Assigned step",
+      "type": "text"
+    },
+    "employeeId": {
+      "column": "Assignee",
+      "type": "text"
+    },
+    "status": {
+      "column": "Progress",
+      "type": "text"
+    }
+  }
+}

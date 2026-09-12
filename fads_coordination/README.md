@@ -1,0 +1,353 @@
+# Hooks contract
+
+Hooks take and return JSON, except the Server-Sent Events stream.
+Every inbound call carries the employee or caller id it acts for; the demo trusts it, a real host must authenticate it.
+Every outbound item is an info package with `type`, `id`, `createdAt`,
+`workspaceId`, `incidentId`, `revision`, and a typed `body`.
+
+### Inbound (data in)
+
+| Endpoint | Body | Effect |
+| --- | --- | --- |
+| `POST /hooks/assignments` | Full assignment package (existing fixture shape) | Validate, persist, plan, schedule reminders. Same revision and content is a no-op. |
+| `POST /hooks/assignments/from-document` | `{source: {kind: csv or ambiguous_sheet, ref}, fieldMap}` | Map rows to a package, then same as above. Reports unmapped fields, never guesses. |
+| `POST /hooks/employees/{id}/availability` | `{kind: absence, day_off, late, custom; incidentId?; window: {start, end}; reason; sourceId}` | Store an availability override. Replan. Emit `conflict` if any task becomes blocked or misses its deadline. |
+| `POST /hooks/reminders/{id}/acknowledge` | `{employeeId}` | Existing acknowledge rules. |
+| `POST /hooks/reminders/{id}/snooze` | `{employeeId, until}` | Existing snooze rules. Emits `conflict` if snooze passes the latest feasible start. |
+| `POST /hooks/tasks/{incidentId}/{taskId}/accept` | `{employeeId, sourceId}` | Record `acceptedAt`; emit `acceptance`. Does not complete work. |
+| `POST /hooks/notifications/{packageId}/snooze` | `{employeeId, minutes, sourceId}` | Queue a notification repeat on the demo clock, 1–60 minutes; three per original package. |
+| `POST /hooks/tasks/{incidentId}/{taskId}/delay` | `{employeeId, minutes or until, note, sourceId}` | Apply a Phase 3 `late` override anchored to the planned task start; replan and signal conflicts. |
+| `POST /hooks/tasks/{incidentId}/{taskId}/done` | `{employeeId, checklist: [{item, done}], actualMinutes?, waitingMinutes?, scopeChanged?, note?, sourceId}` | Mark complete. Missing actuals are stored as unknown and excluded from estimate learning. Emit `completion`. |
+| `POST /hooks/tasks/{incidentId}/{taskId}/proof` | `{employeeId, proof: {kind: image, file, text, link; ref; sha256?; note?}, sourceId}` | Store the reference only. Attach to the task. Included in the next `completion` package. |
+| `POST /hooks/workflows/{id}/{version}/confirm` | `{confirmedBy}` | Activate a pending catalog entry. |
+
+`sourceId` is a caller-generated idempotency key. A repeated call with the
+same `sourceId` returns the original result and changes nothing.
+
+### Outbound (data and signals out)
+
+Three outbound transports (all local in this demo):
+
+- `GET /hooks/outbox?callerId=host&after=<cursor>&types=assignment,reminder,conflict&employeeId=alex` returns
+  packages in order with a next cursor. Each polled item also carries its own
+  `cursor`, allowing a consumer to resume after any processed item. This polling
+  metadata does not alter the stored/signed webhook envelope. Both `types` and
+  `employeeId` are optional filters; only matching items advance the cursor.
+- Optional push: if `FADS_WEBHOOK_URL` and `FADS_WEBHOOK_SECRET` are set, each
+  package is POSTed with an HMAC-SHA256 signature over timestamp plus body,
+  bounded retries, and per-package delivery state. Off by default.
+- `GET /hooks/stream?callerId=alex&employeeId=alex&after=<cursor>` is a
+  `text/event-stream` response. Each matching package is an SSE event with its
+  cursor as `id`, type as `event`, and JSON envelope as `data`. `Last-Event-ID`
+  takes precedence over `after` on reconnect. The handler polls SQLite every
+  second and sends a comment heartbeat every 15 seconds. The demo uses
+  `ThreadingHTTPServer` with daemon request threads and one SQLite connection
+  per request, so open streams do not block hooks or health checks.
+
+| Package type | Body | When |
+| --- | --- | --- |
+| `assignment` | employeeId, taskId, name, kind assigned/removed/rescheduled, startAt, endAt, prepareAt, previousEmployeeId or null, revision, plainText, actions | First ownership, changed ownership, task removal, or moved start/end. Reassignment emits removed to the old employee and assigned to the new. |
+| `acceptance` | employeeId, taskId, acceptedAt | First acceptance of this ownership; for the backend. |
+| `schedule_entry` | employeeId, taskId, name, startAt, endAt, prepareAt, location, dependsOn | Each planned or replanned task. Upsert by taskId and revision. |
+| `reminder` | employeeId, reminderId, kind prepare or ready, taskId, dueAt, text, acknowledgeUrl, snoozeUrl, actions | When a reminder becomes due inside the employee's work window. |
+| `conflict` | employeeId, taskId, cause (absence, late, snooze, no_window, overdue), affectedTasks, revision, overrideSequence, plainText, actions | When a schedule update makes a task infeasible or moves the projected finish past the deadline. |
+| `completion` | employeeId, taskId, completedAt, checklist, actualMinutes or null, waitingMinutes, proofs[], note | On done. |
+| `state` | full plan snapshot | On request via `GET /hooks/state/{incidentId}`. |
+
+Revision rule: upstream owns the package revision. Employee availability
+overrides live in their own table with their own sequence and always subtract
+from availability at plan time. A `conflict` carries both numbers so upstream
+can send a new package that reflects the change; overrides stay in force
+until they expire or are withdrawn, so a re-sent package cannot silently
+re-schedule someone on their day off.
+
+## Run and test
+
+Python 3.11+, standard library only. From the repository root:
+
+```sh
+python3 -m fads_coordination.demo
+python3 -m unittest discover -s fads_coordination/tests -v
+python3 fads_coordination/scripts/smoke_coordination.py
+python3 fads_coordination/scripts/smoke_hooks.py
+```
+
+Open [the local workboard](http://127.0.0.1:8787). `--port` and `--db` select an
+isolated demo. The clock advances only through the controls; SQLite state
+persists in `.fads/demo.sqlite`. All people, locations, work, and delivery are
+fixtures. Verification logs belong in the ignored repository `artifacts/`.
+Fixture success is not live-service proof.
+
+The product is the worker-side module. `api.py` exposes `Hooks` and an optional
+loopback HTTP handler; `core.py` owns deterministic planning and persistence.
+A host supplies authenticated workspace/caller context, database, and clock.
+The optional `demo.py` mounts `/`, `/demo/state`, `/demo/action`, and
+`POST /demo/reset`; these are not required for hooks integration. Other owned
+parts live beside them: `web/`, `fixtures/`, `tests/`, and `scripts/`.
+
+## Actionable employee notifications
+
+Open [Alex’s employee page](http://127.0.0.1:8787/web/employee.html?employeeId=alex)
+or [Sam’s page](http://127.0.0.1:8787/web/employee.html?employeeId=sam) from the
+board, then click **Enable notifications**. Only that click requests permission
+and registers `web/sw.js`. Loopback (`127.0.0.1` or `localhost`) qualifies as a
+secure context. Keep the employee tab open; it forwards incoming SSE packages
+to the service worker. Cards show the same actions without requiring permission.
+The last cursor and recent cards are saved per employee in localStorage; browsers
+without EventSource use the employee-filtered outbox polling fallback.
+
+Notification buttons render on Chromium browsers; Safari and Firefox show the
+notification without buttons and the in-page card carries the same buttons.
+Nothing arrives while the browser is closed; that needs Web Push and HTTPS
+later. There is no Web Push, external call, or external dependency here.
+Browser/OS notification acceptance testing belongs to Claude; serving these
+files and testing hooks does not establish OS notification delivery.
+
+`assignment`, `reminder`, and `conflict` bodies include an ordered `actions`
+array of at most four objects: `id`, plain `label`, `method`, `url`, and `body`.
+Delay adds `needs: ["minutes", "note"]` and a `resolveUrl` pointing to the
+employee page with the package ID. Hook actions get a fresh `sourceId` per click. Every notification also has
+`{id: "open", label: "Open web", kind: "link", url}` pointing to its employee
+page and package card; link actions navigate without calling a hook.
+The service worker orders popup actions as Open web, Accept, then Snooze 5 min,
+up to `Notification.maxActions` (two when the limit is unavailable). A browser
+supporting only two actions gets Open web and Accept. All actions, including
+Snooze and Delay, remain on the card.
+macOS controls banner presentation and may reveal actions only on hover;
+the website cannot force an always-visible native button. A plain
+click opens/focuses the package card on the existing employee page. Delay
+resolve links add `action=delay` and open the note form. Errors open the employee page with
+the server’s explanation. The worker uses package IDs as notification tags.
+
+Action lists are snapshots at emission. Newly emitted packages omit Accept
+when accepted, Snooze after the original package's three-snooze cap, and Delay
+once work has started. Removed assignments retain only Open web;
+completion and backend acceptance packages have no actions. Hooks revalidate
+ownership and state when a stale button is clicked. Acceptance survives an
+ordinary revision with the same owner and resets on reassignment or removal.
+Upstream revisions remain unchanged by employee actions.
+
+Notification snooze only delays another notification; it does not move the
+schedule or alter the existing reminder snooze hook. Repeats carry top-level
+`repeatOf` naming the original package, retain its content, and regenerate
+state-appropriate actions and URLs for the new ID. Repeats of completed,
+started, cancelled, or reassigned work are suppressed. The latest feasible
+start uses a backward fit through availability windows, task dependencies,
+planned employee order and any incident deadline. A snooze past that bound
+returns 409 with guidance to use delay.
+
+Delay requires a 1–500 character note and either integer `minutes` (1–10080)
+or an offset-bearing `until` later than the planned start. It calls the existing
+availability override path with kind `late`, subtracting the interval from that
+task’s planned start to its new arrival time. It preserves earlier work on the
+day, supersedes affected reminders, publishes schedule/assignment updates and
+uses the Phase 3 conflict tolerance. The override stores the note; any resulting
+conflict includes it in `plainText` for the dispatcher. It does not resolve the
+conflict or contact upstream services.
+
+Fixture walkthrough for Claude: open the board and Alex’s page, enable
+notifications, then switch tabs. Reset testing to load the fixture; accept
+“Assigned: Secure site 09:00” and see accepted on the board. Enable Sam’s page,
+click “Driver available 30 min later” on the board, then Delay on Sam’s card,
+enter 30 minutes and “truck in the shop”; the conflict panel shows the note.
+Use the board’s +5 min control to deliver a snoozed notification.
+
+## Assignment and reminder behavior
+
+Use [branch-removal.json](fixtures/branch-removal.json) for the unchanged package
+shape. Timestamps require offsets and the incident declares an IANA time zone.
+The caller supplies an approved task graph, confirmed employees, qualifications,
+equipment access, and usable work windows. The module checks those constraints
+and sequences dependencies; upstream owns cross-incident capacity and actual
+equipment reservations. It does not resolve conflicts or generate procedures.
+
+Preparing does not imply permission to start. Ready reminders require completed
+prerequisites; acknowledgement does not complete work. In-app receipts and the
+outbox commit together. Due reminders recheck the current assignment and usable
+work window; reassignment, completion and cancellation invalidate stale work.
+There is a five-minute recipient cooldown and four-reminders-per-hour cap across
+incidents. An overdue in-progress task needs an updated remaining-effort report
+or completion to unblock downstream ETA. Quiet hours beyond supplied work
+windows and escalation remain unconfigured and off.
+
+The ordinary assignment hook rejects stale/reused changed revisions. Same
+revision plus identical content is a no-op. Schedule updates include revision
+and overrideSequence; clients apply them in outbox cursor order. Local hooks
+use workspace-scoped SQLite transactions and source receipts for retries.
+
+## Reset testing
+
+**Reset testing** clears the fixture workspace's incidents, reminders, inbox,
+outbox/delivery state, availability overrides, done records, proof references,
+catalog, document receipts, outcomes, and notes. It restores the initial five
+tasks, fixture clock, and first ready reminder. It preserves other workspaces,
+repository files, and external systems. Reset is also available at
+`POST /demo/reset` with `{"callerId":"fixture-tester"}`; it is demo-only.
+
+Reset is atomic and creates a fresh testing epoch for reminder/package ids.
+Outbox cursors keep increasing, so an existing poller sees restored entries.
+The endpoint returns the full restored snapshot; the demo replaces its view.
+A host that embeds reset must likewise clear its displayed test state. Use
+**Start next incident with this memory** after resolution to retain learning;
+use reset for a completely fresh test.
+
+## Memory policy
+
+Outcome evidence, numerical profiles and preparation notes remain separate.
+This memory is an independent local store.
+
+Profiles match **workspace + workflow ID/version + task ID + context**. They
+use at most the latest 50 comparable completed outcomes, excluding unknown actuals and reported
+scope changes. Time waiting is not active effort. Actuals are manually confirmed
+or must come from an upstream effort source, never inferred from elapsed time.
+Rework with changed scope should be marked excluded; richer cause modeling is
+not implemented.
+
+Below five samples, use the approved template estimate. At five or more, use
+the median actual/template ratio with five baseline-equivalent observations as
+a conservative prior: `factor = 1 + (median_ratio - 1) * n / (n + 5)`.
+The estimate is rounded up, with a minimum of one minute. Show sample count,
+observed spread and up to ten evidence IDs; the spread is not a confidence
+interval. Forecast evidence is frozen per plan revision. Later completion
+does not silently adopt new estimates for other pending tasks.
+
+Notes require explicit dispatcher confirmation, a source ID, topic, task scope,
+and evidence. They are displayed as information only, never executable
+instructions or generated workflow steps. Reusing a topic updates one canonical
+note and its version; replayed evidence does not create another note. At most
+five active notes per scope are admitted. Temporary notes expire by timestamp.
+Exact duplicate text under another topic is rejected; semantic deduplication is
+not claimed. Workspace, workflow-version and task boundaries are applied before
+retrieval, so unrelated cases cannot inherit the note.
+
+Forgetting removes current note text or outcome evidence and stores opaque
+suppression IDs to stop source replay. Profiles are derived from remaining
+outcomes, so future recommendations recompute. Previously approved forecasts
+remain as historical numeric decisions until explicit replanning; they are not
+new evidence. Notes are not copied into notification history. This does not
+erase exported files, upstream records or filesystem backups.
+
+## Phase 1 minimization audit
+
+Ponytail was not installed: no local copy or rule files were found, and the
+no-external-service-calls constraint prohibits downloading its repository or
+installing from its marketplace. Ponytail itself was not run.
+A **manual minimization pass** was used.
+It removed a temporary outcome-values list and used a single batch statement
+for settings writes. Validation, idempotency, transactions, and revision checks
+are retained. At the Phase 1 commit, core.py fell from 592 to 591 lines and
+demo.py from 232 to 231; all existing behavior tests passed. Later phases use
+small standard-library functions and review for unnecessary abstractions.
+
+## Local transport details
+
+Assignment writes include `callerId` alongside the existing package fields;
+other administrative writes use `callerId` or the named `confirmedBy` field.
+Employee hooks carry `employeeId` matching the path/assignment. GET hooks use
+`?callerId=fixture-reader`. Workspace is bound by the host (the demo uses its
+fixture workspace); it is not selected by an untrusted URL. A real host must
+authenticate these identities. Routes outside `/hooks/` are optional `/demo/`
+controls; the old `/api/` routes are removed.
+
+Webhook push is disabled unless both environment variables are set. For this
+fixture-only implementation, only `http://127.0.0.1:<port>/<path>` is accepted;
+redirects are not followed. Headers are `X-FADS-Timestamp` (Unix seconds),
+`X-FADS-Signature: sha256=<hex HMAC(secret, timestamp + "." + exact JSON bytes)>`,
+and `Idempotency-Key` (package id). Receivers must verify signatures, freshness,
+and ids. 2xx is accepted; 5xx retries at most three total attempts with 2/4-second
+delays; other HTTP responses fail. Timeout, connection uncertainty, or a crash
+while sending remains `unknown` and requires host reconciliation, never a blind
+resend. Acceptance is not proof of downstream processing. Delivery state lives
+in `webhook_deliveries`; polling is always available independently of push.
+
+## Availability and conflict semantics
+
+Employee updates carry `employeeId` matching the path and a unique `sourceId`.
+`day_off`/`absence` remove the calendar day containing `window.start` in the
+incident's IANA zone (including 23/25-hour days). For `late`, `window.start`
+is the new arrival time; time from midnight until arrival is unavailable.
+`custom` subtracts the exact start/end interval. End must follow start in the
+request. Overrides expire at the end of the removed interval. They do not
+increment the upstream revision, and survive replacement assignment packages.
+Unscoped overrides affect all this employee's known incidents; day-based
+updates need an incident scope if time zones differ. Withdrawals are reserved
+for a future host interface; this slice exposes expiry only.
+
+`conflictToleranceMinutes` on the assignment package defaults to **0**, an
+explicit fixture default awaiting team policy. A newly blocked task, a finish
+moving later by more than this tolerance, or a newly missed incident
+`deadlineAt` emits one conflict per affected incident. It names the primary
+employee/task and downstream affected tasks; it does not resolve anything.
+A 20-minute late arrival may use existing slack and produce no conflict.
+Schedule upserts include `overrideSequence`; consumers order same-revision
+updates by outbox cursor. Snoozes beyond feasible work windows persist as
+constraints and signal a conflict, instead of silently undoing the snooze.
+
+## Completion and evidence
+
+Done requires a nonempty checklist of `{item, done: true}` records and the
+assigned `employeeId`. `actualMinutes` omitted or null stays SQL/JSON null and
+is excluded from estimate samples; zero is accepted only when explicitly
+supplied. Waiting minutes default to zero and do not train active estimates.
+Local checklist completion is an overlay, so it does not increment or rewrite
+the upstream assignment revision, and replaying a snapshot cannot reopen work.
+The legacy library/demo replan and cancellation helpers represent new simulated
+upstream revisions; employee hooks never use them.
+
+Proof hooks store only the provided reference, optional checksum text, and note.
+No URL is fetched, no path opened, and no checksum or content is analyzed.
+Post proof before done to include it in the completion envelope. Later proof
+references are visible in the state snapshot; already emitted envelopes remain
+immutable. File-byte upload is off and has no endpoint. Source receipts are
+transactional with the write and outbox event, preventing duplicates on replay.
+The UI shows `actual unknown` and allows leaving active minutes blank.
+
+## Fixture document mapping
+
+`POST /hooks/assignments/from-document` takes `callerId`, `source`, and
+`fieldMap`. Use `source: {"kind":"csv","ref":"assignments.csv"}` and the
+object in [field-map.json](fixtures/field-map.json). The CSV is an illustrative
+fixture, not a team-supplied assigning document. Every column choice lives in
+that map. Sections are `package` (dot paths), `tasks`, `employees`, and
+`assignments`; specs declare a column and text/integer/number/json conversion.
+Repeated employee and task rows must agree. Missing required mappings name
+the package field; missing mapped columns name the exact column. Nothing is
+inferred from column names. Optional metadata columns must opt in explicitly.
+
+Only files inside this module's fixture directory can be read (256 KiB,
+100-row limits). `kind: ambiguous_sheet` reads `sheet-response.json`, a saved
+`{rows: [...]}` fixture, through the same map. The live sheet endpoint is
+**not called or verified**, and its actual response envelope may need mapping.
+
+A full SHA-256 of normalized mapped rows plus source identity is returned as
+`documentRevision`. The package revision uses its first 52 bits (exact in JSON
+numbers); full hashes detect collisions. These identities have no numeric time
+order: the trusted document adapter applies changed snapshots transactionally,
+while the ordinary assignment hook retains increasing-revision checks. Replaying
+the current hash is a no-op; replaying an older imported hash is rejected.
+Consumers order changes by outbox cursor. Only tasks whose assignments or
+schedule actually changed have reminders superseded; unchanged reminder IDs
+and acknowledgement state carry forward to the new revision.
+
+## Workflow catalog
+
+A previously unseen workspace/id/version is recorded once as `pending`, with
+the supplied graph and first-registration provenance (`createdBy`, `createdAt`,
+`sourceRef`, `howBuilt`). These identify the importing caller and registration
+time, not an inferred original author. Explicit field-map imports also retain
+the source digest. Confirmation records the first `confirmedBy` and timestamp
+and activates the entry; repeat confirmation returns that original record.
+The catalog is included in the state snapshot. Pending catalog review does not
+undo already confirmed assignments: this module does not choose workflows.
+Changed definitions under an existing version are rejected across incidents.
+Existing demo databases backfill entries with clearly labelled migration
+provenance; other hosts can replay their current package to register it.
+
+## Phase report and verification limits
+
+See [the per-phase report](PHASE-REPORT.md) for Done, Skipped, Tests, and Commits.
+The Phase 8 unit suite and extended HTTP smoke script cover notification hooks,
+filtered streams, document mapping and catalog confirmation. Run evidence is
+saved in `artifacts/phase-8-unit.log` and `artifacts/phase-8-http.log`. Browser
+and OS notification acceptance testing is reserved for Claude. No remote
+integration, file-byte upload, or push to the Git remote was performed.

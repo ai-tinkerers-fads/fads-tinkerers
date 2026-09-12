@@ -226,6 +226,37 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Local ideation and research (shared docs/plan remains tracked)
+/[Ii]dea.txt
+/PLAN.md
+/docs/planning/
+/docs/research/
+
+# Local credentials, runtime databases, and verification artifacts
+.env.*
+!.env.example
+.ambi/
+.DS_Store
+/.fads/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+/artifacts/
+node_modules/
+
+# Internal agent communications and brainstorms (Claude/Codex handoffs, kickoff prompts, scratch notes).
+# Shared, team-facing plans stay tracked in docs/plan/.
+/docs/internal/
+HANDOFF-*.md
+CODEX-*.md
+CLAUDE-*.md
+*BRAINSTORM*
+*brainstorm*
+codex-prompt*.md
+PHASE-REPORT*.md
+*-REPORT.md
+
 # FADS local/runtime artifacts
 node_modules/
 .next/

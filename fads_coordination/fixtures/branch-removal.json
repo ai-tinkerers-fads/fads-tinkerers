@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "workspaceId": "demo-roads",
+  "revision": 1,
+  "startAt": "2026-09-14T09:00:00-07:00",
+  "timeZone": "America/Los_Angeles",
+  "context": "standard",
+  "incident": {
+    "id": "pine-street-001",
+    "classification": "fallen_branches",
+    "location": {"address": "Pine Street — simulated location", "latitude": 37.79, "longitude": -122.42},
+    "report": {"text": "Large branches block both lanes. Demo report; no real dispatch."}
+  },
+  "workflow": {
+    "id": "branch-removal",
+    "version": 1,
+    "tasks": [
+      {"id": "secure", "name": "Secure site", "requiredSkill": "site_safety", "requiredEquipment": ["barriers"], "estimatedMinutes": 10, "dependsOn": []},
+      {"id": "cut", "name": "Cut and remove branches", "requiredSkill": "chainsaw", "requiredEquipment": ["chainsaw"], "estimatedMinutes": 30, "dependsOn": ["secure"]},
+      {"id": "load", "name": "Load material", "requiredSkill": "loader", "requiredEquipment": ["loader"], "estimatedMinutes": 20, "dependsOn": ["cut"]},
+      {"id": "transport", "name": "Transport and dispose", "requiredSkill": "transport", "requiredEquipment": ["truck"], "estimatedMinutes": 30, "dependsOn": ["load"]},
+      {"id": "verify", "name": "Verify road is clear", "requiredSkill": "site_safety", "estimatedMinutes": 10, "dependsOn": ["transport"]}
+    ]
+  },
+  "employees": [
+    {"id": "alex", "name": "Alex", "skills": ["site_safety", "chainsaw"], "equipmentAccess": ["barriers", "chainsaw"], "availability": [{"start": "2026-09-14T09:00:00-07:00", "end": "2026-09-14T17:00:00-07:00"}]},
+    {"id": "jordan", "name": "Jordan", "skills": ["loader", "site_safety"], "equipmentAccess": ["loader"], "availability": [{"start": "2026-09-14T09:00:00-07:00", "end": "2026-09-14T17:00:00-07:00"}]},
+    {"id": "sam", "name": "Sam", "skills": ["transport"], "equipmentAccess": ["truck"], "availability": [{"start": "2026-09-14T11:00:00-07:00", "end": "2026-09-14T17:00:00-07:00"}]}
+  ],
+  "assignments": [
+    {"incidentId": "pine-street-001", "taskId": "secure", "employeeId": "alex", "status": "pending"},
+    {"incidentId": "pine-street-001", "taskId": "cut", "employeeId": "alex", "status": "pending"},
+    {"incidentId": "pine-street-001", "taskId": "load", "employeeId": "jordan", "status": "pending"},
+    {"incidentId": "pine-street-001", "taskId": "transport", "employeeId": "sam", "status": "pending"},
+    {"incidentId": "pine-street-001", "taskId": "verify", "employeeId": "jordan", "status": "pending"}
+  ]
+}
