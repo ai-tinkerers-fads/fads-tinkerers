@@ -11,4 +11,4 @@ Duc’s worker-side module queue (2026-09-12), fixture and local sinks only:
 7. Catalog new workflows with provenance and confirmation.
 8. Retain scoped outcomes, estimates, and preparation notes.
 
-Execution order and acceptance conditions: [handoff](HANDOFF-CODEX.md).
+Execution order and acceptance conditions live in a local, untracked handoff note; ask Duc for it.

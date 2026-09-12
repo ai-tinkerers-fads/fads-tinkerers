@@ -10,7 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .api import HookHandler, deliver_webhooks
-from .core import Coordination, Conflict, InvalidInput, canonical, iso, number, stamp
+from .core import Coordination, Conflict, InvalidInput, iso, number, required, stamp
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).parent / "fixtures" / "branch-removal.json"
@@ -38,6 +38,25 @@ def initialize(path):
             set_values(app, workspace=package["workspaceId"], incident=package["incident"]["id"], clock=iso(package["startAt"]))
     finally:
         app.close()
+
+
+def reset_testing(app, caller):
+    required({"callerId": caller}, "callerId")
+    package = json.loads(FIXTURE.read_text())
+    workspace, incident, now = package["workspaceId"], package["incident"]["id"], stamp(package["startAt"])
+    if settings(app).get("workspace") != workspace:
+        raise InvalidInput("Reset is limited to the fixture workspace")
+    with app.db:
+        app._begin()
+        app.db.execute("DELETE FROM webhook_deliveries WHERE package_id IN (SELECT id FROM outbox WHERE workspace=?)", (workspace,))
+        for table in ("notifications", "reminders", "outbox", "forecasts", "outcomes", "lesson_sources", "lessons",
+                      "suppressed", "proofs", "task_completions", "availability_overrides", "reminder_snoozes",
+                      "hook_requests", "document_versions", "workflows", "packages"):
+            app.db.execute(f"DELETE FROM {table} WHERE workspace=?", (workspace,))
+        for name, value in {"workspace": workspace, "incident": incident, "clock": iso(now), "reset_epoch:" + workspace: uuid.uuid4().hex}.items():
+            app.db.execute("INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (name, value))
+        app._put(package, now)
+    return app.tick(workspace, incident, now)
 
 
 def action(app, data):
@@ -133,7 +152,8 @@ class DemoServer(HTTPServer):
         app = Coordination(self.database)
         try:
             config = settings(app)
-            app.tick(config["workspace"], config["incident"], stamp(config["clock"]))
+            for row in app.db.execute("SELECT incident FROM packages WHERE workspace=?", (config["workspace"],)).fetchall():
+                app.tick(config["workspace"], row[0], stamp(config["clock"]))
             deliver_webhooks(app)
         except (InvalidInput, Conflict) as exc:
             print(f"Scheduler needs attention: {exc}", file=sys.stderr)
@@ -159,6 +179,8 @@ class Handler(HookHandler):
         return False
 
     def demo_post(self, path, app, data):
+        if path == "/demo/reset":
+            return reset_testing(app, data.get("callerId"))
         if path == "/demo/action":
             return action(app, data)
         raise InvalidInput("Unknown demo endpoint")

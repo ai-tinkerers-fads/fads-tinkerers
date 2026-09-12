@@ -1,6 +1,8 @@
 """Exercise a real disposable HTTP demo; never contacts external services."""
 
+import copy
 import json
+import os
 import selectors
 import subprocess
 import sys
@@ -14,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def main():
     with tempfile.TemporaryDirectory(prefix="fads-smoke-") as folder:
-        server = subprocess.Popen([sys.executable, "-m", "fads_coordination.demo", "--port", "0", "--db", str(Path(folder) / "demo.sqlite")], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        server = subprocess.Popen([sys.executable, "-m", "fads_coordination.demo", "--port", "0", "--db", str(Path(folder) / "demo.sqlite")], cwd=ROOT, env={k:v for k,v in os.environ.items() if k not in ("FADS_WEBHOOK_URL","FADS_WEBHOOK_SECRET")}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             with selectors.DefaultSelector() as selector:
                 selector.register(server.stdout, selectors.EVENT_READ)
@@ -88,6 +90,70 @@ def main():
             state = action("cancel", revision=state["package"]["revision"])
             assert state["incidentStatus"] == "cancelled"
             print("PASS: disposable HTTP integration complete; no external messages")
+
+            # Phase 7: complete worker hook contract, using a fresh fixture case.
+            reset = request("/demo/reset", {"callerId": "fixture-tester"})
+            assert not reset["outcomes"] and not reset["lessons"] and not reset["proofs"]
+            fixture = json.loads((ROOT / "fads_coordination/fixtures/branch-removal.json").read_text())
+            fixture["incident"]["id"] = case = "hook-fixture-case"
+            for assignment in fixture["assignments"]:
+                assignment["incidentId"] = case
+            cursor = request("/hooks/outbox?callerId=fixture-reader")["nextCursor"]
+            request("/hooks/assignments", {"callerId": "fixture-dispatcher", **fixture})
+            entries = request(f"/hooks/outbox?callerId=fixture-reader&after={cursor}&types=schedule_entry")["items"]
+            assert len(entries) == 5 and all(i["incidentId"] == case for i in entries)
+            request("/hooks/assignments", {"callerId": "fixture-dispatcher", **fixture})
+            assert len(request(f"/hooks/outbox?callerId=fixture-reader&after={cursor}&types=schedule_entry")["items"]) == 5
+            # A GET lets the local server's next service tick process the new case.
+            request("/health")
+            snapshot = request(f"/hooks/state/{case}?callerId=fixture-reader")["body"]
+            # Existing recipient cooldown may defer this new case; move fixture clock.
+            for _ in range(4):
+                if snapshot["notifications"]:
+                    break
+                action("advance", minutes=5)
+                request("/health")
+                snapshot = request(f"/hooks/state/{case}?callerId=fixture-reader")["body"]
+            notification = snapshot["notifications"][0]
+            request(f"/hooks/reminders/{notification['reminderId']}/acknowledge", {"employeeId": notification["employeeId"]})
+            assert request(f"/hooks/state/{case}?callerId=fixture-reader")["body"]["incidentStatus"] == "assigned"
+            print("PASS FIXTURE hooks: package in, five schedules, reminder out, acknowledgement without completion")
+            override = {"employeeId":"sam", "kind":"day_off", "incidentId":case,
+                        "window":{"start":fixture["startAt"],"end":"2026-09-14T17:00:00-07:00"},
+                        "reason":"Fixture day off", "sourceId":"fixture-dayoff"}
+            conflict = request("/hooks/employees/sam/availability", override)
+            assert conflict == request("/hooks/employees/sam/availability", override)
+            assert len(conflict["conflicts"]) == 1
+            assert conflict["conflicts"][0]["body"]["affectedTasks"] == ["transport", "verify"]
+            blocked = request(f"/hooks/state/{case}?callerId=fixture-reader")["body"]
+            assert blocked["estimatedResolutionAt"] is None and blocked["package"]["revision"] == 1
+            replacement = copy.deepcopy(fixture["employees"][2]); replacement.update(id="pat",name="Pat")
+            fixture["employees"].append(replacement)
+            fixture["assignments"][3]["employeeId"] = "pat"
+            fixture["revision"] = 2
+            restored = request("/hooks/assignments", {"callerId":"fixture-dispatcher",**fixture})
+            assert all(t["state"] == "scheduled" for t in restored["schedule"])
+            print("PASS FIXTURE hooks: day off, conflict out, upstream replacement in; override retained")
+            proof = {"employeeId":"alex", "sourceId":"fixture-proof", "proof":{"kind":"image","ref":"fixture://unread-proof.png"}}
+            receipt = request(f"/hooks/tasks/{case}/secure/proof", proof)
+            assert receipt == request(f"/hooks/tasks/{case}/secure/proof", proof)
+            done = {"employeeId":"alex", "sourceId":"fixture-done", "checklist":[{"item":"Assigned work done","done":True}]}
+            completion = request(f"/hooks/tasks/{case}/secure/done", done)
+            assert completion == request(f"/hooks/tasks/{case}/secure/done", done)
+            assert completion["body"]["actualMinutes"] is None
+            assert completion["body"]["proofs"][0]["ref"] == proof["proof"]["ref"]
+            page = request("/hooks/outbox?callerId=fixture-reader&types=completion")
+            assert [i["id"] for i in page["items"]] == [completion["id"]]
+            confirm = request("/hooks/workflows/branch-removal/1/confirm", {"confirmedBy":"fixture-reviewer"})
+            assert confirm["status"] == "active"
+            print("PASS FIXTURE hooks: proof reference, unknown actual, completion out, catalog confirmation")
+            latest = request("/hooks/outbox?callerId=fixture-reader")["nextCursor"]
+            reset = request("/demo/reset", {"callerId":"fixture-tester"})
+            assert reset["package"]["revision"] == 1 and reset["incidentStatus"] == "assigned"
+            assert not reset["outcomes"] and not reset["proofs"]
+            assert len(request(f"/hooks/outbox?callerId=fixture-reader&after={latest}")["items"]) == 6
+            print("PASS FIXTURE reset: cleared local test state and memory, restored fixture, retained forward cursor")
+            print("PASS PHASE 7: complete fixture/local-sink hook walkthrough; no external service calls")
         finally:
             server.terminate()
             try:

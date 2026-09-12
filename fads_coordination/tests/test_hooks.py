@@ -302,3 +302,41 @@ class HookTests(unittest.TestCase):
         with self.assertRaises(InvalidInput):
             self.app.confirm_workflow('another-workspace','branch-removal',1,'reviewer',self.now)
         self.assertEqual('pending',self.app.workflow_catalog(self.ws)[0]['status'])
+
+    def test_phase7_override_does_not_reopen_or_block_completed_work(self):
+        self.load()
+        self.done()
+        self.availability('alex','absence')
+        state=self.app.state(self.ws,self.incident,self.now)
+        self.assertEqual('complete',state['schedule'][0]['status'])
+        self.assertEqual('scheduled',state['schedule'][0]['state'])
+        self.assertEqual('blocked',state['schedule'][1]['state'])
+        self.assertEqual('cut',self.items('conflict')[0]['body']['taskId'])
+        self.assertFalse(any(r['taskId']=='secure' and r['status']=='scheduled' for r in state['reminders']))
+
+    def test_phase7_day_off_uses_full_dst_day(self):
+        from zoneinfo import ZoneInfo
+        self.now=datetime(2026,11,1,0,tzinfo=ZoneInfo('America/Los_Angeles'))
+        self.hooks.now=self.now
+        self.package['startAt']=self.now.isoformat()
+        for e in self.package['employees']:
+            e['availability']=[{'start':self.now.isoformat(),'end':(self.now+timedelta(days=1)).isoformat()}]
+        self.load()
+        self.availability('sam','day_off')
+        row=self.app.db.execute('SELECT start_at,end_at FROM availability_overrides').fetchone()
+        self.assertEqual(timedelta(hours=25),datetime.fromisoformat(row['end_at'])-datetime.fromisoformat(row['start_at']))
+
+    def test_phase7_in_progress_work_respects_new_absence(self):
+        self.package['assignments'][0].update(status='in_progress',startedAt=self.package['startAt'])
+        self.load()
+        result=self.availability('alex','absence')
+        self.assertEqual('secure',result['conflicts'][0]['body']['taskId'])
+        self.assertEqual('blocked',self.app.state(self.ws,self.incident,self.now)['schedule'][0]['state'])
+
+    def test_phase7_new_hook_shapes_rejected_without_partial_writes(self):
+        self.load()
+        with self.assertRaises(InvalidInput):
+            self.hooks.post('/hooks/employees/sam/availability', {'employeeId':'sam','kind':'late','sourceId':'bad-window','window':[]})
+        with self.assertRaises(InvalidInput):
+            self.hooks.post(f'/hooks/tasks/{self.incident}/secure/proof',{'employeeId':'alex','sourceId':'bad-proof','proof':[]})
+        self.assertEqual(0,self.app.db.execute('SELECT COUNT(*) FROM hook_requests').fetchone()[0])

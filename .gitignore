@@ -235,3 +235,13 @@ __marimo__/
 *.sqlite3-*
 /artifacts/
 node_modules/
+
+# Internal agent communications and brainstorms (Claude/Codex handoffs, kickoff prompts, scratch notes).
+# Shared, team-facing plans stay tracked in docs/plan/.
+/docs/internal/
+HANDOFF-*.md
+CODEX-*.md
+CLAUDE-*.md
+*BRAINSTORM*
+*brainstorm*
+codex-prompt*.md

@@ -74,7 +74,7 @@ def validate(package):
         raise InvalidInput("timeZone must be an IANA zone") from exc
     required(package, "context")
     number(package.get("conflictToleranceMinutes", 0), "conflictToleranceMinutes", 0, 1440)
-    if package.get("incident", {}).get("deadlineAt"):
+    if isinstance(package.get("incident"), dict) and package["incident"].get("deadlineAt"):
         stamp(package["incident"]["deadlineAt"])
     if type(package.get("cancelled", False)) is not bool:
         raise InvalidInput("cancelled must be boolean")
@@ -454,6 +454,10 @@ class Coordination:
                         result.update(state="blocked", reason="Work is overdue; report remaining minutes or completion")
                         scheduled[task_id] = result
                         continue
+                    if not any(stamp(w["start"]) <= now and end <= stamp(w["end"]) for w in self.available_windows(package, employee, now)):
+                        result.update(state="blocked", reason="Current availability interrupts in-progress work")
+                        scheduled[task_id] = result
+                        continue
                 else:
                     slot = self._slot(self.available_windows(package, employee, now), earliest, duration, busy.get(employee["id"], []))
                     if slot is None:
@@ -491,7 +495,7 @@ class Coordination:
             for kind, due in (("prepare", task["prepareAt"]), ("ready", task["startAt"])):
                 active = self.db.execute("SELECT id FROM reminders WHERE workspace=? AND incident=? AND revision=? AND task=? AND kind=? AND employee=? AND status IN ('scheduled','delivered','acknowledged')", (workspace, incident, revision, task["taskId"], kind, task["employeeId"])).fetchone()
                 snooze_version = self.db.execute("SELECT MAX(until_at) FROM reminder_snoozes WHERE workspace=? AND incident=? AND task=? AND revision=?", (workspace, incident, task["taskId"], revision)).fetchone()[0]
-                reminder_id = active[0] if active else key(workspace, incident, revision, task["taskId"], kind, self.override_sequence(package), snooze_version)
+                reminder_id = active[0] if active else key(workspace, incident, revision, task["taskId"], kind, self.override_sequence(package), snooze_version, self.testing_epoch(workspace))
                 self.db.execute("""INSERT INTO reminders VALUES (?,?,?,?,?,?,?,?,?,?,'scheduled',NULL,NULL,NULL)
                     ON CONFLICT(id) DO UPDATE SET due_at=excluded.due_at,start_at=excluded.start_at,end_at=excluded.end_at
                     WHERE reminders.status='scheduled'""", (reminder_id, workspace, incident, task["taskId"], task["employeeId"], revision, kind, due, task["startAt"], task["endAt"]))
@@ -606,12 +610,14 @@ class Coordination:
             if kind not in ("absence", "day_off", "late", "custom"):
                 raise InvalidInput("Unknown availability kind")
             window = data.get("window", {})
+            if not isinstance(window, dict):
+                raise InvalidInput("window must be an object")
             start, end = stamp(window.get("start")), stamp(window.get("end"))
             if end <= start:
                 raise InvalidInput("Availability override start must precede end")
             reason = required(data, "reason", 1000)
             incident = data.get("incidentId")
-            packages = [json.loads(r[0]) for r in self.db.execute("SELECT body FROM packages WHERE workspace=?", (workspace,))]
+            packages = [self._package(workspace, r[0]) for r in self.db.execute("SELECT incident FROM packages WHERE workspace=?", (workspace,))]
             packages = [p for p in packages if (incident is None or p["incident"]["id"] == incident) and any(e["id"] == employee for e in p["employees"])]
             if not packages:
                 raise InvalidInput("Unknown employee or incident")
@@ -653,9 +659,13 @@ class Coordination:
             self._refresh(package, now)
             return {"reminderId": reminder_id, "accepted": True, "conflict": conflict}
 
+    def testing_epoch(self, workspace):
+        row = self.db.execute("SELECT value FROM settings WHERE key=?", ("reset_epoch:" + workspace,)).fetchone()
+        return row[0] if row else None
+
     def emit(self, package, kind, body, now, identity=None):
         workspace, incident, revision = package["workspaceId"], package["incident"]["id"], package["revision"]
-        item_id = key(workspace, incident, revision, kind, identity if identity is not None else body)
+        item_id = key(workspace, incident, revision, kind, identity if identity is not None else body, self.testing_epoch(workspace))
         item = {"type": kind, "id": item_id, "createdAt": iso(now), "workspaceId": workspace,
                 "incidentId": incident, "revision": revision, "body": body}
         self.db.execute("INSERT OR IGNORE INTO outbox(id,type,workspace,incident,revision,body,created_at) VALUES (?,?,?,?,?,?,?)",
@@ -798,6 +808,8 @@ class Coordination:
             if not any(a["taskId"] == task and a["employeeId"] == employee for a in package["assignments"]):
                 raise InvalidInput("Task is not assigned to this employee")
             proof = data.get("proof", {})
+            if not isinstance(proof, dict):
+                raise InvalidInput("proof must be an object")
             if proof.get("kind") not in ("image", "file", "text", "link"):
                 raise InvalidInput("Unknown proof kind")
             ref = required(proof, "ref", 2000)
