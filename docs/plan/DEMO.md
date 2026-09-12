@@ -1,43 +1,49 @@
 # Demo story
 
-## The promise
+## Promise
 
-In under two minutes, show how FADS turns scattered Slack and email activity
-into a shared understanding of what needs attention next.
+Show in under two minutes how a resident's road-blockage report becomes a
+coordinated, explainable field plan rather than an unassigned ticket.
 
 ## Scenario
 
-The team is preparing a partner demo. A Slack thread contains a decision to
-use a new sample dataset and assigns a follow-up. An email later raises a
-deadline risk because the dataset has not arrived. Neither item is enough on
-its own; together, they reveal an unresolved blocker.
+A storm knocks large branches across Pine Street. A resident submits a photo,
+places a map pin, and notes that traffic cannot pass. The agent identifies a
+road obstruction and selects the **remove branches from road** workflow.
+
+The chosen crew is:
+
+- **Alex, chainsaw operator:** available now; qualified to cut branches.
+- **Jordan, loader operator:** available now; qualified to load material.
+- **Sam, transport driver:** available soon; qualified to drive material to the
+  disposal site.
 
 ## Walkthrough
 
-1. **Open the activity timeline.** Show mixed Slack and email events in
-   chronological order, visibly labeled by source.
-2. **Orient the viewer.** FADS displays a concise current-state summary:
-   the sample dataset decision exists, the delivery is still pending, and the
-   partner demo is at risk.
-3. **Open “Needs attention.”** Show a small ranked queue with one concrete
-   blocker: confirm dataset delivery and owner.
-4. **Show the evidence.** Open the item to reveal the contributing Slack
-   thread and email, including source, time, author, and a link or stable
-   source reference.
-5. **Close with a safe recommendation.** FADS proposes a human-reviewed next
-   step, such as “ask the dataset owner for an ETA before 3 PM.” It does not
-   send the message.
+1. **Resident intake:** Submit the photo, Pine Street map pin, and short
+   description. The incident appears as `Reported`.
+2. **Agent assessment:** Show the image/location analysis, selected workflow,
+   confidence, and a dispatcher override control.
+3. **Crew plan:** Show why Alex, Jordan, and Sam were chosen: role capability,
+   availability, and necessary sequencing.
+4. **Workboard:** Show tasks in order: secure site → cut branches → load →
+   transport/dispose → verify clear. Each task has an owner and status.
+5. **Resident update:** Show a grounded ETA based on scheduled task durations
+   and crew availability: “Crew assigned; expected road clearance by 2:30 PM.”
+6. **Resolution:** Mark tasks complete. The road becomes `Resolved`, and the
+   resident sees that it is clear.
 
 ## Acceptance checks
 
-- At least two sources appear in the same view.
-- Every summary claim is traceable to one or more source events.
-- The UI makes an unresolved request, decision, or blocker obvious.
-- A viewer understands why this is better than checking the two channels
-  separately.
+- Photo and location create an incident.
+- A predefined workflow—not a free-form plan—is selected.
+- The selected crew satisfies all required roles and availability constraints.
+- Task dependencies are visible.
+- ETA changes intelligibly if a required worker is unavailable.
+- The resident and dispatcher have distinct but consistent views.
 
-## If integrations are unavailable
+## Fallback
 
-Use deterministic fixture data, clearly marked **Demo data**, with source
-identifiers and realistic event shapes. The UI and reasoning path should stay
-the same so a real adapter can replace each fixture later.
+Use deterministic images, geocoded locations, employee schedules, and agent
+classification outputs if live integrations risk the core demonstration. Label
+all records **Demo data**.

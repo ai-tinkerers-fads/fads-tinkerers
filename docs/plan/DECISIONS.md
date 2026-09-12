@@ -1,44 +1,54 @@
 # Decisions
 
-Use one short entry per material choice. The goal is shared context, not a
-formal approval process.
+Short, dated choices for shared operating context—not a heavyweight approval
+process.
 
 ## Template
 
 ```md
-## YYYY-MM-DD — Decision title
+## YYYY-MM-DD — Title
 
 **Decision:** What we chose.
-
-**Why:** Brief rationale and constraints.
-
+**Why:** Constraints and rationale.
 **Consequences:** What this unlocks or gives up.
-
 **Owner:** Name or `team`.
 ```
 
-## 2026-09-12 — Optimize for a narrow, grounded coordination demo
+## 2026-09-12 — Model the product as road-operations coordination
 
-**Decision:** The first demo will focus on two sources, a normalized activity
-stream, an attention queue, and evidence back to the original items.
+**Decision:** FADS is an AI-assisted government road-operations department,
+not a cross-tool shared-memory product.
 
-**Why:** This proves the coordination value without spending the weekend on
-many integrations or unsupervised agent behavior.
+**Why:** The road-incident model gives the team a concrete user journey,
+bounded workflows, meaningful agent decisions, and visual demo value.
 
-**Consequences:** Additional modalities are represented as adapter candidates,
-not required demo scope.
+**Consequences:** All UI and backend work should serve report intake, incident
+assessment, workflow execution, and crew coordination.
 
 **Owner:** team
 
-## 2026-09-12 — Keep source systems read-only
+## 2026-09-12 — Constrain agent behavior to predefined workflows
 
-**Decision:** FADS will summarize and suggest actions, but will not send,
-reply, or edit data in connected systems for the hackathon build.
+**Decision:** The agent chooses among a small catalog of human-defined
+workflows, then fills in assignments and sequencing.
 
-**Why:** Read-only access lowers setup, safety, and trust costs while keeping
-the core product idea visible.
+**Why:** It creates an explainable, safe, buildable demo while retaining the
+core value of agentic coordination.
 
-**Consequences:** The demo ends with a proposed next action, rather than an
-autonomous action.
+**Consequences:** Encode branch removal, pothole repair, and obstruction
+removal as data; do not rely on free-form operational plans.
+
+**Owner:** team
+
+## 2026-09-12 — Use simulated operations data for the hackathon
+
+**Decision:** Employees, schedules, equipment, incidents, and notifications
+are fixture/simulated data for the demo.
+
+**Why:** The product can be demonstrated without real municipal access or
+safety-critical integrations.
+
+**Consequences:** Clearly label the demo environment and keep all dispatch
+actions reviewable.
 
 **Owner:** team

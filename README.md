@@ -1,12 +1,9 @@
 # FADS
 
-Hackathon prototype for a coordination layer that brings scattered work
-signals—starting with Slack and email—into one shared, actionable view.
+Hackathon prototype for an AI-assisted road-operations department: a resident
+reports a road issue, an agent selects the right response workflow, and the
+system coordinates an available field crew through completion.
 
-The project working documents live in [docs/plan](docs/plan):
-
-- [Vision](docs/plan/VISION.md)
-- [What we are doing now](docs/plan/NOW.md)
-- [Decisions](docs/plan/DECISIONS.md)
-- [Demo story](docs/plan/DEMO.md)
-- [Integration map](docs/plan/INTEGRATIONS.md)
+Planning documents: [vision](docs/plan/VISION.md), [current work](docs/plan/NOW.md),
+[decisions](docs/plan/DECISIONS.md), [demo](docs/plan/DEMO.md), and
+[operations model](docs/plan/INTEGRATIONS.md).
