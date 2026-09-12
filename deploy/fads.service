@@ -1,0 +1,21 @@
+[Unit]
+Description=FADS road response web app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aindoori
+WorkingDirectory=/home/aindoori/Software_Projects/fads-tinkerers
+EnvironmentFile=/home/aindoori/.config/fads/runtime.env
+Environment=PORT=8808
+Environment=HOSTNAME=127.0.0.1
+Environment=NODE_ENV=production
+ExecStart=/home/aindoori/Software_Projects/fads-tinkerers/run.sh
+Restart=always
+RestartSec=2
+StartLimitBurst=0
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

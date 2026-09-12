@@ -1,0 +1,270 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
+:root {
+  --ink: #17231d;
+  --muted: #68736d;
+  --paper: #f5f3ec;
+  --card: #fffef9;
+  --green: #174f37;
+  --lime: #d9ef8b;
+  --line: #dcded5;
+  --orange: #e76f3d;
+  --content-width: 1280px;
+  --page-gutter: max(24px, calc((100vw - var(--content-width)) / 2));
+}
+
+* { box-sizing: border-box; }
+
+html, body { max-width: 100%; overflow-x: clip; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+}
+
+a { color: inherit; }
+
+.masthead {
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--page-gutter);
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.brand {
+  text-decoration: none;
+  font-family: Manrope, sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.brand span {
+  margin-right: 6px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: var(--green);
+  color: white;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, .7fr);
+  gap: clamp(40px, 6vw, 96px);
+  padding: 80px var(--page-gutter) 72px;
+  background: var(--green);
+  color: white;
+}
+
+.hero > *, .evidence-grid > *, .fields, .issue-card { min-width: 0; }
+
+.eyebrow {
+  color: #b9d8c6;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  margin: 14px 0 22px;
+  font: 800 clamp(44px, 6vw, 78px) / 1.02 Manrope, sans-serif;
+  letter-spacing: -.055em;
+}
+
+.lede {
+  max-width: 680px;
+  color: #d8e5dc;
+  font-size: 19px;
+  line-height: 1.6;
+}
+
+.promise {
+  align-self: end;
+  padding: 28px;
+  border: 1px solid #42755d;
+  border-radius: 18px;
+  background: #235e44;
+}
+
+.promise ol {
+  padding-left: 20px;
+  color: #e0eadf;
+  line-height: 2;
+}
+
+.report-shell {
+  width: min(var(--content-width), calc(100% - 48px));
+  margin: 0 auto;
+  padding: 72px 0;
+}
+
+.section-heading h2 {
+  margin: 8px 0 34px;
+  font: 800 36px / 1.2 Manrope, sans-serif;
+}
+
+.section-heading .eyebrow { color: var(--green); }
+
+.report-form { display: grid; gap: 22px; }
+
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 26px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--card);
+}
+
+legend {
+  padding: 0 10px;
+  font: 700 17px Manrope, sans-serif;
+}
+
+.issue-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.issue-card, .upload { position: relative; }
+
+.issue-card input, .upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.issue-card span {
+  display: block;
+  height: 100%;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  cursor: pointer;
+}
+
+.issue-card small, .upload small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.issue-card input:focus-visible + span { outline: 3px solid var(--lime); outline-offset: 2px; }
+
+.issue-card input:checked + span {
+  padding: 16px;
+  border: 2px solid var(--green);
+  background: #eef4df;
+}
+
+.evidence-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 25px;
+}
+
+.upload {
+  min-height: 310px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 2px dashed #a8b0a7;
+  border-radius: 15px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.upload:focus-within { outline: 3px solid var(--lime); outline-offset: 2px; }
+
+.upload img { width: 100%; height: 310px; object-fit: cover; }
+
+.fields, .contact-grid { display: grid; gap: 14px; }
+.contact-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+label { font-size: 14px; font-weight: 600; }
+
+input, textarea {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+  padding: 12px 13px;
+  border: 1px solid #cbd0c8;
+  border-radius: 9px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+}
+
+textarea { resize: vertical; }
+.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+
+button {
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  font: 700 14px Manrope, sans-serif;
+}
+
+.secondary { padding: 11px; background: #e8ebe4; color: var(--ink); }
+
+.submit {
+  min-width: 240px;
+  justify-self: end;
+  padding: 17px 24px;
+  background: var(--orange);
+  color: white;
+  font-size: 16px;
+}
+
+.submit:disabled { opacity: .6; }
+.privacy { margin: 0; color: var(--muted); font-size: 13px; }
+.error { padding: 12px; border-radius: 8px; background: #fee9df; color: #a93520; }
+
+footer {
+  padding: 28px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.status-page, .dispatch-page { max-width: 1050px; margin: 0 auto; padding: 70px 24px; }
+.status-card { padding: 30px; border: 1px solid var(--line); border-radius: 20px; background: var(--card); }
+.status-line { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.pill { padding: 7px 12px; border-radius: 999px; background: var(--lime); color: #2d451b; font-size: 12px; font-weight: 700; }
+.timeline { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 32px 0; }
+.timeline span { height: 7px; border-radius: 8px; background: #d9ddd6; }
+.timeline span.active { background: var(--green); }
+.queue { display: grid; gap: 12px; }
+.queue article { display: flex; justify-content: space-between; gap: 20px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
+
+@media (max-width: 800px) {
+  :root { --page-gutter: 24px; }
+  .hero, .evidence-grid { grid-template-columns: 1fr; }
+  .hero { gap: 28px; padding-top: 48px; }
+  .promise { align-self: auto; }
+  .report-shell { width: calc(100% - 32px); padding: 48px 0; }
+  .issue-grid, .contact-grid { grid-template-columns: 1fr; }
+  .timeline { grid-template-columns: repeat(3, 1fr); }
+  .masthead { gap: 16px; }
+  .brand { font-size: 17px; }
+}
+
+@media (max-width: 520px) {
+  .hero h1 { font-size: 42px; }
+  fieldset { padding: 20px 16px; }
+  .split { grid-template-columns: 1fr; }
+  .submit { width: 100%; min-width: 0; }
+}

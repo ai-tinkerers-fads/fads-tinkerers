@@ -1,0 +1,19 @@
+[Unit]
+Description=FADS Ambiguous incident dispatcher
+After=network-online.target fads.service
+Wants=network-online.target fads.service
+
+[Service]
+Type=simple
+User=aindoori
+WorkingDirectory=/home/aindoori/Software_Projects/fads-tinkerers
+EnvironmentFile=/home/aindoori/.config/fads/runtime.env
+Environment=NODE_ENV=production
+ExecStart=/home/aindoori/Software_Projects/fads-tinkerers/dispatch.sh
+Restart=always
+RestartSec=2
+StartLimitBurst=0
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

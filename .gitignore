@@ -245,3 +245,17 @@ CLAUDE-*.md
 *BRAINSTORM*
 *brainstorm*
 codex-prompt*.md
+
+# FADS local/runtime artifacts
+node_modules/
+.next/
+*.tsbuildinfo
+data/
+uploads/
+.ambi/
+.env*.local
+
+# Deepwork orchestration state
+.slim/deepwork/
+.slim/worktrees/
+.slim/worktrees.json
