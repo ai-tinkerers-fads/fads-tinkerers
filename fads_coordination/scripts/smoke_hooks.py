@@ -299,7 +299,7 @@ def main():
                 links_ok &= action.get("kind") == "link" and url.path == "/web/employee.html" and parse_qs(url.query) == {"employeeId": [item["body"]["employeeId"]], "package": [item["id"]]}
             with urlopen(base + buttons["open"]["url"], timeout=3) as response:
                 check("open web: every notification links to its employee card; URL serves page", links_ok and response.status == 200 and response.headers.get_content_type() == "text/html")
-            for path, mime in (("/web/employee.html?employeeId=alex", "text/html"), ("/web/sw.js", "text/javascript")):
+            for path, mime in (("/web/employee.html?employeeId=alex", "text/html"), ("/web/sw.js", "text/javascript"), ("/web/notification-client.js", "text/javascript")):
                 with urlopen(base + path, timeout=3) as response:
                     check("client: " + path + " served with correct type", response.status == 200 and response.headers.get_content_type() == mime and bool(response.read()))
         finally:

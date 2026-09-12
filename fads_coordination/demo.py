@@ -164,7 +164,8 @@ class DemoServer(ThreadingHTTPServer):
 class Handler(HookHandler):
     def demo_get(self, path, app):
         files = {"/": ("index.html", "text/html"), "/web/employee.html": ("employee.html", "text/html"),
-                 "/web/sw.js": ("sw.js", "text/javascript")}
+                 "/web/sw.js": ("sw.js", "text/javascript"),
+                 "/web/notification-client.js": ("notification-client.js", "text/javascript")}
         if path in files:
             filename, content_type = files[path]
             body = (Path(__file__).parent / "web" / filename).read_bytes()
