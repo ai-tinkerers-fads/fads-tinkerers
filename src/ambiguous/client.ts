@@ -56,15 +56,17 @@ export class AmbiguousClient implements AmbiguousPort {
   }
 
   async createTask(input: { title: string; description: string; projectId?: string; assigneeId?: string; statusId?: string; priority?: "urgent" | "high" | "medium" | "low" }): Promise<AmbiguousTask> {
-    const body = {
-      title: input.title,
-      description: input.description,
-      project_id: input.projectId ?? this.config.projectId,
-      assignee_id: input.assigneeId,
-      task_status_id: input.statusId,
-      priority: input.priority ?? "high",
-    };
-    return unwrapTask(await this.request("/api/tasks", { method: "POST", body: JSON.stringify(body) }));
+    return unwrapTask(await this.request("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        title: input.title,
+        description: input.description,
+        project_id: input.projectId ?? this.config.projectId,
+        assignee_id: input.assigneeId,
+        task_status_id: input.statusId,
+        priority: input.priority ?? "high",
+      }),
+    }));
   }
 
   async createSubtask(parentId: string, input: { title: string; description: string; assigneeId?: string; statusId?: string; estimatedMinutes?: number; sortOrder?: number }): Promise<AmbiguousTask> {
@@ -77,6 +79,7 @@ export class AmbiguousClient implements AmbiguousPort {
         task_status_id: input.statusId,
         estimated_minutes: input.estimatedMinutes,
         sort_order: input.sortOrder,
+        project_id: this.config.projectId,
       }),
     }));
   }
@@ -153,7 +156,6 @@ export class AmbiguousClient implements AmbiguousPort {
   async updateEvent(eventId: string, input: Record<string, unknown>): Promise<void> {
     await this.request(`/api/calendars/events/${eventId}`, { method: "PATCH", body: JSON.stringify(input) });
   }
-
 
   async userIsAdmin(userId: string): Promise<boolean> {
     return (this.config.adminIds ?? []).includes(userId);
