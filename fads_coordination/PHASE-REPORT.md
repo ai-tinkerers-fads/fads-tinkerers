@@ -35,3 +35,14 @@ The reset button clears the demo workspace including feedback memory and
 restores the original fixture. Existing tracked source files and other workspace
 rows are preserved. Forgotten proof references do not delete external files;
 this module never reads those bytes in the first place.
+
+## Review follow-up
+
+Claude's independent review covered committed Phases 0–6 in a disposable
+worktree. The follow-up commit fixes the README opening and adds per-item
+polling cursors without changing signed webhook envelopes. The existing
+`smoke_hooks.py` now also checks document imports and catalog confirmation.
+The regression suite passes 50 tests and the extended smoke passes 28/28
+checks. Logs: `artifacts/review-fixes-tests.log` and
+`artifacts/review-fixes-http.log`. Phase rows above retain their historical
+counts. No external service calls or Git push were made.

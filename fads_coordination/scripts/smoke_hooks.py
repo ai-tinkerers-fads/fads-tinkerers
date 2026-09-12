@@ -1,4 +1,4 @@
-"""Acceptance smoke for the hooks contract (handoff Phases 2-4) against a disposable local server.
+"""Acceptance smoke for the hooks contract (handoff Phases 2-6) against a disposable local server.
 
 Starts its own demo server and a local signed-webhook receiver, exercises the
 real HTTP hooks, and inspects the SQLite ledger. Never contacts external services.
@@ -169,6 +169,28 @@ def main():
             check("proof: posted before done appears in the completion package", status == 200 and len(body.get("proofs", [])) == 1 and body.get("actualMinutes") == 30)
             status, _ = req("/hooks/tasks/pine-street-001/load/done", {"employeeId": "jordan", "checklist": [{"item": "x", "done": False}], "sourceId": "smoke-bad"})
             check("done: unchecked checklist item rejected", status == 400)
+
+            # Phases 5-6: same existing script; fixture document and catalog hooks.
+            mapping = json.loads((ROOT / "fads_coordination/fixtures/field-map.json").read_text())
+            document = {"callerId":"smoke", "source":{"kind":"csv","ref":"assignments.csv"}, "fieldMap":mapping}
+            before = count("SELECT COUNT(*) n FROM outbox WHERE type='schedule_entry'")
+            status, imported = req("/hooks/assignments/from-document", document)
+            after = count("SELECT COUNT(*) n FROM outbox WHERE type='schedule_entry'")
+            check("document: fixture CSV maps to five schedule entries", status == 200 and after-before == 5)
+            status, repeated = req("/hooks/assignments/from-document", document)
+            check("document: unchanged source emits no new schedule entries", status == 200 and imported["documentRevision"] == repeated["documentRevision"] and count("SELECT COUNT(*) n FROM outbox WHERE type='schedule_entry'") == after)
+            bad = copy.deepcopy(document)
+            del bad["fieldMap"]["assignments"]["employeeId"]
+            status, error = req("/hooks/assignments/from-document", bad)
+            check("document: missing assignee mapping is named", status == 400 and "assignments.employeeId" in error.get("error", ""))
+            status, confirmed = req("/hooks/workflows/branch-removal/1/confirm", {"confirmedBy":"smoke-reviewer"})
+            check("catalog: confirm activates existing workflow", status == 200 and confirmed.get("status") == "active")
+            status, repeated = req("/hooks/workflows/branch-removal/1/confirm", {"confirmedBy":"another-reviewer"})
+            check("catalog: repeat confirm retains original provenance", status == 200 and repeated == confirmed)
+            page = req("/hooks/outbox?callerId=smoke&types=schedule_entry")[1]
+            first = page["items"][0]
+            rest = req(f"/hooks/outbox?callerId=smoke&types=schedule_entry&after={first['cursor']}")[1]
+            check("outbox: resume after an individual item cursor", rest["items"] and rest["items"][0]["id"] == page["items"][1]["id"] and all(item["cursor"] > first["cursor"] for item in rest["items"]))
         finally:
             server.terminate()
             try:

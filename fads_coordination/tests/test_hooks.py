@@ -340,3 +340,16 @@ class HookTests(unittest.TestCase):
         with self.assertRaises(InvalidInput):
             self.hooks.post(f'/hooks/tasks/{self.incident}/secure/proof',{'employeeId':'alex','sourceId':'bad-proof','proof':[]})
         self.assertEqual(0,self.app.db.execute('SELECT COUNT(*) FROM hook_requests').fetchone()[0])
+
+    def test_outbox_item_cursor_resumes_midpage_with_filters(self):
+        self.load()
+        page=self.app.outbox(self.ws,limit=3)
+        cursors=[item['cursor'] for item in page['items']]
+        self.assertEqual(sorted(set(cursors)),cursors)
+        self.assertEqual(cursors[-1],page['nextCursor'])
+        resumed=self.app.outbox(self.ws,after=cursors[1],types=['schedule_entry'])
+        self.assertEqual(page['items'][2]['id'],resumed['items'][0]['id'])
+        self.assertEqual(3,len(resumed['items']))
+        self.assertTrue(all(item['cursor']>cursors[1] for item in resumed['items']))
+        stored=self.app.db.execute('SELECT body FROM outbox WHERE cursor=?',(cursors[0],)).fetchone()[0]
+        self.assertNotIn('cursor',json.loads(stored))  # Transport metadata does not change signed bytes.

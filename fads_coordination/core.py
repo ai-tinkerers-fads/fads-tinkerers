@@ -690,7 +690,7 @@ class Coordination:
             clauses.append("type IN (" + ",".join("?" for _ in types) + ")")
             args.extend(types)
         rows = self.db.execute("SELECT cursor,body FROM outbox WHERE " + " AND ".join(clauses) + " ORDER BY cursor LIMIT ?", (*args, limit)).fetchall()
-        return {"items": [json.loads(r["body"]) for r in rows], "nextCursor": rows[-1]["cursor"] if rows else after}
+        return {"items": [{**json.loads(r["body"]), "cursor": r["cursor"]} for r in rows], "nextCursor": rows[-1]["cursor"] if rows else after}
 
     def _owned_reminder(self, workspace, reminder_id, employee):
         row = self.db.execute("SELECT * FROM reminders WHERE workspace=? AND id=? AND employee=?", (workspace, reminder_id, employee)).fetchone()

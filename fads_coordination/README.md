@@ -1,8 +1,6 @@
 # Hooks contract
 
-
-Every
-endpoint takes and returns JSON. Every inbound call carries the employee or
+Every endpoint takes and returns JSON. Every inbound call carries the employee or
 caller id it acts for; the demo trusts it, a real host must authenticate it.
 Every outbound item is an info package with `type`, `id`, `createdAt`,
 `workspaceId`, `incidentId`, `revision`, and a typed `body`.
@@ -28,7 +26,9 @@ same `sourceId` returns the original result and changes nothing.
 Two transports, both always available:
 
 - `GET /hooks/outbox?after=<cursor>&types=reminder,conflict,completion` returns
-  packages in order with a next cursor. The frontend or backend polls this.
+  packages in order with a next cursor. Each polled item also carries its own
+  `cursor`, allowing a consumer to resume after any processed item. This polling
+  metadata does not alter the stored/signed webhook envelope.
 - Optional push: if `FADS_WEBHOOK_URL` and `FADS_WEBHOOK_SECRET` are set, each
   package is POSTed with an HMAC-SHA256 signature over timestamp plus body,
   bounded retries, and per-package delivery state. Off by default.
@@ -265,8 +265,8 @@ provenance; other hosts can replay their current package to register it.
 ## Phase report and verification limits
 
 See [the per-phase report](PHASE-REPORT.md) for Done, Skipped, Tests, and Commits.
-The final fixture suite has 49 passing tests; the complete HTTP walkthrough and
-22 signed-webhook hook checks also pass. Browser automation could not discover
+After review fixes, the fixture suite has 50 passing tests; the existing HTTP
+smoke script passes 28 hook checks, including document mapping and catalog confirmation. Browser automation could not discover
 tabs and native app access was denied, so visual/click verification of the reset
 button is not claimed. Its real HTTP endpoint, reset data behavior, binding and
 JavaScript syntax were verified. No remote integration, file-byte upload, or
