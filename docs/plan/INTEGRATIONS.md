@@ -42,8 +42,9 @@ type IncidentEvidence = {
 
 type Employee = {
   id: string;
+  workspaceUserId: string; // Ambiguous user ID used for task assignment
   name: string;
-  skills: string[]; // e.g. chainsaw, loader, pothole_repair, transport
+  simulatedSkills: string[]; // demo roles, not real-world qualifications
   availability: Array<{ start: string; end: string }>;
   equipmentAccess?: string[];
 };
@@ -85,6 +86,10 @@ type WorkAssignment = {
 4. Prefer a crew whose availability allows the earliest completed dependent
    sequence; use distance only as a simple tie-breaker if modeled.
 5. Present the decision rationale and allow dispatcher override.
+
+Crew assignments should use `workspaceUserId`, so creating an Ambiguous task
+assigns it to the teammate already in the workspace. The app keeps the
+simulated role profile separately from the member's real-world identity.
 
 ## Intake and agent-routing policy
 
