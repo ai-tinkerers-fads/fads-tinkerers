@@ -1,60 +1,78 @@
-# Integration map
+# Operations model
 
-## Adapter contract
+## System roles
 
-Each source adapter converts source records into a common `ActivityEvent`.
-Keep the original payload or a stable source reference outside the generated
-summary so users can inspect evidence.
+| Component | Role |
+| --- | --- |
+| Resident web app | Accepts photo, location, and optional issue description; displays status and ETA. |
+| Incident service | Stores reports, status, evidence, chosen workflow, work plan, and updates. |
+| Agent coordinator | Classifies incident, selects a predefined workflow, finds a qualified available crew, calculates an estimate, and explains its choices. |
+| Dispatcher workspace | Lets staff inspect, override, and track incident plans. |
+| Field workboard | Shows each employee their assigned tasks, location, dependencies, and completion controls. |
 
-```ts
-type ActivityEvent = {
-  id: string;                 // stable: `${source}:${sourceRecordId}`
-  source: "slack" | "email" | "ambiguous" | "other";
-  sourceRecordId: string;
-  occurredAt: string;         // ISO 8601 UTC
-  author: { id?: string; name: string };
-  participants?: string[];
-  text: string;
-  threadId?: string;
-  permalink?: string;
-  metadata?: Record<string, unknown>;
-};
-```
-
-## Source status
-
-| Source | Demo role | Access strategy | Status | Notes |
-| --- | --- | --- | --- | --- |
-| Slack | Primary source | Read-only API or labeled fixtures | Planned | Preserve channel, thread, author, timestamp, permalink. |
-| Email | Primary source | Read-only provider API or labeled fixtures | Planned | Preserve sender, recipients, subject, time, thread, link/reference. |
-| Ambiguous.ai | Candidate adapter | Investigate later | Deferred | Do not make this a critical path before the two-source flow works. |
-| Other tools | Candidate adapters | Contract + fixtures first | Deferred | Add only when a clear demo benefit exceeds setup cost. |
-
-## Ingestion rules
-
-- Source data is read-only for this prototype.
-- Normalize timestamps to UTC; render in the viewer’s locale.
-- Retain a source reference for every event.
-- Do not invent authors, timestamps, or source links when using fixtures.
-- Make fixture mode visible in the UI.
-- Avoid storing secrets or raw private data in the repository.
-
-## Attention-item contract
-
-Derived items should retain their evidence rather than become detached LLM
-claims.
+## Core contracts
 
 ```ts
-type AttentionItem = {
+type Incident = {
   id: string;
-  kind: "ask" | "decision" | "blocker" | "follow_up";
-  title: string;
-  summary: string;
-  suggestedNextStep?: string;
-  evidenceEventIds: string[];
-  confidence?: "high" | "medium" | "low";
+  status: "reported" | "assessed" | "assigned" | "in_progress" | "resolved";
+  location: { address?: string; latitude: number; longitude: number };
+  report: { description?: string; imageUrl?: string; reportedAt: string };
+  classification?: "fallen_branches" | "pothole" | "vehicle_or_debris";
+  workflowId?: string;
+  estimatedResolutionAt?: string;
+  rationale?: string;
+};
+
+type Employee = {
+  id: string;
+  name: string;
+  skills: string[]; // e.g. chainsaw, loader, pothole_repair, transport
+  availability: Array<{ start: string; end: string }>;
+  equipmentAccess?: string[];
+};
+
+type Workflow = {
+  id: string;
+  incidentType: Incident["classification"];
+  requiredRoles: Array<{ skill: string; count: number }>;
+  tasks: Array<{
+    id: string;
+    name: string;
+    requiredSkill?: string;
+    dependsOn?: string[];
+    estimatedMinutes: number;
+  }>;
+};
+
+type WorkAssignment = {
+  incidentId: string;
+  taskId: string;
+  employeeId: string;
+  status: "pending" | "ready" | "in_progress" | "complete";
 };
 ```
 
-An attention item without at least one evidence event should not be shown as a
-fact; at most, present it as an explicitly labeled hypothesis.
+## Workflow definitions
+
+| Workflow | Required capabilities | Core task sequence |
+| --- | --- | --- |
+| Remove branches | site safety, chainsaw, loader, transport/disposal | Secure → cut → load → transport → verify clear |
+| Fix pothole | site safety, pothole repair, materials/vehicle | Secure → prepare → repair → verify/reopen |
+| Remove vehicle/debris | site safety, recovery/removal, transport | Secure → recover/remove → transport → verify clear |
+
+## Assignment policy for the prototype
+
+1. Match each workflow role to an employee with the required skill.
+2. Exclude employees unavailable during the task window.
+3. Verify necessary equipment access.
+4. Prefer a crew whose availability allows the earliest completed dependent
+   sequence; use distance only as a simple tie-breaker if modeled.
+5. Present the decision rationale and allow dispatcher override.
+
+## Safety boundaries
+
+- The demo uses simulated people, equipment, maps, and notifications.
+- The agent may only select from approved workflow data.
+- A human can override classification, workflow, assignment, and ETA.
+- Never describe the demo as a real emergency-response or public-safety system.

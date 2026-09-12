@@ -2,45 +2,62 @@
 
 ## One sentence
 
-FADS is a lightweight coordination layer that turns fragmented conversations
-and requests across work tools into a clear, shared answer to: **what needs
-attention, why, and who can move it forward?**
+FADS helps a road-operations department turn a resident's report into a safe,
+coordinated field response: identify the incident, choose the right workflow,
+assign the capable available crew, and communicate the expected resolution.
 
 ## Problem
 
-Work context is fragmented. A decision may begin in Slack, an ask may arrive
-by email, and the relevant follow-up may live in another AI or work tool.
-People lose time reconstructing the story, duplicate work, and miss requests
-whose ownership was implicit rather than explicit.
+A blocked road, pothole, accident debris, or other hazard requires more than
+logging a ticket. Dispatch must understand what happened, determine the work
+required, find people with the right skills and availability, coordinate their
+dependencies, and keep the reporting resident informed.
 
-## First user
+## Product flow
 
-A small team coordinating a fast-moving project across at least two channels.
-They need a quick orientation rather than another inbox: current activity,
-open asks, decision context, and suggested next moves.
+1. **Report:** A resident submits a road issue through a web page with a photo,
+   location, and optional description.
+2. **Assess:** The backend records the incident. An agent analyzes the report
+   and selects from predefined operational workflows.
+3. **Plan:** The system determines required skills, equipment, and task
+   dependencies; it chooses an available, qualified crew.
+4. **Coordinate:** Crew members receive work in the right sequence, with the
+   incident location and overall plan visible.
+5. **Resolve:** Work completion updates the incident and gives the resident a
+   grounded expected-completion time and resolution update.
+
+## Initial workflow catalog
+
+- **Remove branches from road:** secure site → cut/remove branches → load
+  material → transport/dispose → verify road is clear.
+- **Fix pothole:** secure site → prepare hole → apply repair → verify/reopen.
+- **Remove car/debris from road:** secure site → recover/remove obstruction →
+  transport/dispose → verify road is clear.
 
 ## Weekend outcome
 
-Demonstrate a trustworthy coordination view that:
+Demonstrate one end-to-end incident:
 
-1. brings Slack-like messages and email-like messages into a shared timeline;
-2. preserves source links and enough context to inspect each item;
-3. identifies a small number of open asks, decisions, or blockers; and
-4. explains the evidence behind each summary or suggested action.
+1. a resident uploads an image and location;
+2. the agent classifies fallen branches blocking a road and chooses the branch
+   removal workflow;
+3. the coordinator assigns an available chainsaw operator, loader operator,
+   and disposal/transport driver, respecting skills and schedules;
+4. the web app shows the ordered work plan and expected completion time; and
+5. task completion updates the incident and creates a resident-facing status.
 
-## Product principles
+## Principles
 
-- **Source-first.** Keep provenance, timestamps, participants, and links.
-- **Useful before complete.** A narrow, reliable two-source flow beats broad
-  but brittle integrations.
-- **Human stays in control.** Suggest and summarize; do not send, reply, or
-  change anything in a connected tool during the demo.
-- **Reversible by default.** Ingestion and analysis should be safe to rerun.
-- **Legible reasoning.** A user can see what messages led to a conclusion.
+- **Workflow-bound autonomy:** the agent selects and fills predefined workflows;
+  it does not invent unsafe field procedures.
+- **Right capability, right time:** assignment uses skill, availability,
+  equipment, and dependencies.
+- **Human override:** dispatchers can review or replace classification,
+  assignments, and estimates.
+- **Auditable decisions:** show why the system chose a workflow and crew.
 
-## Non-goals for the hackathon
+## Non-goals
 
-- Replacing Slack, email, or a project-management system.
-- Building a universal integration platform.
-- Fully autonomous agents that communicate externally.
-- Perfect entity resolution, permissions, or historical backfill.
+- Real emergency dispatch or autonomous safety-critical decisions.
+- Live municipal-system integrations.
+- City-wide route, labor-rule, or fleet optimization.
