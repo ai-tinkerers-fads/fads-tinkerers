@@ -252,3 +252,26 @@ delays; other HTTP responses fail. Timeout, connection uncertainty, or a crash
 while sending remains `unknown` and requires host reconciliation, never a blind
 resend. Acceptance is not proof of downstream processing. Delivery state lives
 in `webhook_deliveries`; polling is always available independently of push.
+
+## Availability and conflict semantics
+
+Employee updates carry `employeeId` matching the path and a unique `sourceId`.
+`day_off`/`absence` remove the calendar day containing `window.start` in the
+incident's IANA zone (including 23/25-hour days). For `late`, `window.start`
+is the new arrival time; time from midnight until arrival is unavailable.
+`custom` subtracts the exact start/end interval. End must follow start in the
+request. Overrides expire at the end of the removed interval. They do not
+increment the upstream revision, and survive replacement assignment packages.
+Unscoped overrides affect all this employee's known incidents; day-based
+updates need an incident scope if time zones differ. Withdrawals are reserved
+for a future host interface; this slice exposes expiry only.
+
+`conflictToleranceMinutes` on the assignment package defaults to **0**, an
+explicit fixture default awaiting team policy. A newly blocked task, a finish
+moving later by more than this tolerance, or a newly missed incident
+`deadlineAt` emits one conflict per affected incident. It names the primary
+employee/task and downstream affected tasks; it does not resolve anything.
+A 20-minute late arrival may use existing slack and produce no conflict.
+Schedule upserts include `overrideSequence`; consumers order same-revision
+updates by outbox cursor. Snoozes beyond feasible work windows persist as
+constraints and signal a conflict, instead of silently undoing the snooze.

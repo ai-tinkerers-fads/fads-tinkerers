@@ -106,3 +106,73 @@ class HookTests(unittest.TestCase):
         deliver_webhooks(self.app, url, 'fixture-secret', now=time.time()+100)
         self.assertEqual(5, len(received))
         self.assertTrue(all(tuple(r)==('unknown',1) for r in self.app.db.execute('SELECT state,attempt FROM webhook_deliveries')))
+
+    def availability(self, employee, kind, start=None, end=None, source="fixture-override"):
+        return self.hooks.post(f"/hooks/employees/{employee}/availability", {
+            "employeeId": employee, "kind": kind, "incidentId": self.incident,
+            "window": {"start": start or self.package["startAt"], "end": end or (self.now+timedelta(hours=1)).isoformat()},
+            "reason": "Fixture schedule update", "sourceId": source})
+
+    def test_phase3_day_off_blocks_dependencies_and_survives_upstream_revision(self):
+        self.load()
+        first = self.availability('sam', 'day_off')
+        self.assertEqual(first, self.availability('sam', 'day_off'))
+        self.assertEqual(1, self.app.db.execute('SELECT COUNT(*) FROM availability_overrides').fetchone()[0])
+        conflicts = self.items('conflict')
+        self.assertEqual(1, len(conflicts))
+        body = conflicts[0]['body']
+        self.assertEqual(('sam', 'transport', 'absence'), (body['employeeId'], body['taskId'], body['cause']))
+        self.assertEqual(['transport', 'verify'], body['affectedTasks'])
+        self.assertIn('Sam', body['plainText'])
+        state = self.app.state(self.ws, self.incident, self.now)
+        self.assertEqual(1, state['package']['revision'])
+        self.assertEqual(['transport', 'verify'], [t['taskId'] for t in state['schedule'] if t['state']=='blocked'])
+        replacement = copy.deepcopy(next(e for e in self.package['employees'] if e['id']=='sam'))
+        replacement.update(id='pat', name='Pat')
+        self.package['employees'].append(replacement)
+        self.package['assignments'][3]['employeeId']='pat'
+        self.package['revision']=2
+        self.load()
+        state = self.app.state(self.ws, self.incident, self.now)
+        self.assertTrue(all(t['state']=='scheduled' for t in state['schedule']))
+        self.assertEqual(1, len(self.items('conflict')))
+        self.assertFalse(any(r['employeeId']=='sam' and r['status']=='scheduled' for r in state['reminders']))
+        sam = next(e for e in self.package['employees'] if e['id']=='sam')
+        self.assertEqual([], self.app.available_windows(self.package, sam, self.now))
+
+    def test_phase3_late_tolerance_and_schedule_upsert(self):
+        for tolerance, expected in ((0,1),(30,0)):
+            with self.subTest(tolerance=tolerance):
+                self.package['incident']['id']=self.incident='late-'+str(tolerance)
+                for a in self.package['assignments']:
+                    a['incidentId']=self.incident
+                self.package['conflictToleranceMinutes']=tolerance
+                self.package['employees'][2]['availability'][0]['start']=self.package['startAt']
+                self.load()
+                before=self.app.state(self.ws,self.incident,self.now)['estimatedResolutionAt']
+                result=self.availability('alex','late',(self.now+timedelta(minutes=20)).isoformat(),source='late-'+str(tolerance))
+                state=self.app.state(self.ws,self.incident,self.now)
+                self.assertTrue(all(t['state']=='scheduled' for t in state['schedule']))
+                self.assertEqual(timedelta(minutes=20), datetime.fromisoformat(state['estimatedResolutionAt'])-datetime.fromisoformat(before))
+                self.assertEqual(expected,len(result['conflicts']))
+                self.assertEqual(1,state['package']['revision'])
+                self.assertTrue(any(i['body']['overrideSequence'] for i in self.items('schedule_entry') if i['incidentId']==self.incident))
+
+    def test_phase3_snooze_past_feasible_window_signals_and_stays_blocked(self):
+        state=self.load()
+        reminder=next(r for r in state['reminders'] if r['taskId']=='transport' and r['kind']=='prepare')
+        result=self.hooks.post('/hooks/reminders/'+reminder['id']+'/snooze', {'employeeId':'sam','until':(self.now+timedelta(hours=9)).isoformat()})
+        self.assertEqual('snooze',result['conflict']['body']['cause'])
+        state=self.app.tick(self.ws,self.incident,self.now)
+        self.assertEqual(['transport','verify'],[t['taskId'] for t in state['schedule'] if t['state']=='blocked'])
+
+    def test_phase3_custom_subtraction_scope_and_recipient_validation(self):
+        self.load()
+        self.availability('sam','custom','2026-09-14T11:00:00-07:00','2026-09-14T11:15:00-07:00')
+        sam=next(e for e in self.package['employees'] if e['id']=='sam')
+        windows=self.app.available_windows(self.package,sam,self.now)
+        self.assertEqual('2026-09-14T18:15:00+00:00',windows[0]['start'])
+        other=copy.deepcopy(self.package);other['incident']['id']='other'
+        self.assertEqual(sam['availability'][0]['start'],datetime.fromisoformat(self.app.available_windows(other,sam,self.now)[0]['start']).astimezone(self.now.tzinfo).isoformat())
+        with self.assertRaises(InvalidInput):
+            self.hooks.post('/hooks/employees/sam/availability', {'employeeId':'alex'})

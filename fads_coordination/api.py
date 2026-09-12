@@ -79,12 +79,16 @@ class Hooks:
                 raise InvalidInput("Workspace does not match host context")
             return self.app.put_package(package, self.now)
         parts = [unquote(part) for part in path.strip("/").split("/")]
+        if len(parts) == 4 and parts[:2] == ["hooks", "employees"] and parts[3] == "availability":
+            if required(data, "employeeId") != parts[2]:
+                raise InvalidInput("employeeId must match the path")
+            return self.app.update_availability(self.workspace, parts[2], data, self.now)
         if len(parts) == 4 and parts[:2] == ["hooks", "reminders"]:
             employee = required(data, "employeeId")
             if parts[3] == "acknowledge":
                 self.app.acknowledge(self.workspace, parts[2], employee, self.now)
             elif parts[3] == "snooze":
-                self.app.snooze(self.workspace, parts[2], employee, data.get("until"), self.now)
+                return self.app.snooze_hook(self.workspace, parts[2], employee, data.get("until"), self.now)
             else:
                 raise InvalidInput("Unknown reminder hook")
             return {"reminderId": parts[2], "accepted": True}

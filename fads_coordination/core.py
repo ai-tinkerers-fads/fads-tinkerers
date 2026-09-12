@@ -73,6 +73,9 @@ def validate(package):
     except ZoneInfoNotFoundError as exc:
         raise InvalidInput("timeZone must be an IANA zone") from exc
     required(package, "context")
+    number(package.get("conflictToleranceMinutes", 0), "conflictToleranceMinutes", 0, 1440)
+    if package.get("incident", {}).get("deadlineAt"):
+        stamp(package["incident"]["deadlineAt"])
     if type(package.get("cancelled", False)) is not bool:
         raise InvalidInput("cancelled must be boolean")
     incident = package.get("incident", {})
@@ -216,6 +219,17 @@ class Coordination:
             PRIMARY KEY(workspace,source_id));
         CREATE TABLE IF NOT EXISTS suppressed (
             workspace TEXT, kind TEXT, source_id TEXT, PRIMARY KEY(workspace,kind,source_id));
+        CREATE TABLE IF NOT EXISTS reminder_snoozes (
+            reminder_id TEXT PRIMARY KEY, workspace TEXT, incident TEXT, task TEXT,
+            revision INTEGER, employee TEXT, until_at TEXT);
+        CREATE TABLE IF NOT EXISTS availability_overrides (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT, employee TEXT,
+            incident TEXT, kind TEXT, start_at TEXT, end_at TEXT, reason TEXT,
+            source_id TEXT, expires_at TEXT, withdrawn INTEGER DEFAULT 0,
+            UNIQUE(workspace,employee,source_id));
+        CREATE TABLE IF NOT EXISTS hook_requests (
+            workspace TEXT, actor TEXT, source_id TEXT, route TEXT, result TEXT,
+            PRIMARY KEY(workspace,actor,source_id));
         CREATE TABLE IF NOT EXISTS outbox (
             cursor INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, type TEXT,
             workspace TEXT, incident TEXT, revision INTEGER, body TEXT, created_at TEXT);
@@ -349,6 +363,11 @@ class Coordination:
                 continue
             else:
                 earliest = max([stamp(package["startAt"]), now] + [stamp(scheduled[d]["endAt"]) for d in result["dependsOn"]])
+                snoozed = self.db.execute("SELECT MAX(snooze_until) FROM reminders WHERE workspace=? AND incident=? AND task=? AND revision=? AND employee=? AND status='scheduled'", (workspace, package["incident"]["id"], task_id, package["revision"], employee["id"])).fetchone()[0]
+                requested = self.db.execute("SELECT MAX(until_at) FROM reminder_snoozes WHERE workspace=? AND incident=? AND task=? AND revision=? AND employee=?", (workspace, package["incident"]["id"], task_id, package["revision"], employee["id"])).fetchone()[0]
+                snoozed = max(filter(None, (snoozed, requested)), default=None)
+                if snoozed:
+                    earliest = max(earliest, stamp(snoozed))
                 duration = timedelta(minutes=profile["recommendedMinutes"])
                 if assignment["status"] == "in_progress":
                     start = stamp(assignment["startedAt"])
@@ -359,7 +378,7 @@ class Coordination:
                         scheduled[task_id] = result
                         continue
                 else:
-                    slot = self._slot(employee.get("availability", []), earliest, duration, busy.get(employee["id"], []))
+                    slot = self._slot(self.available_windows(package, employee, now), earliest, duration, busy.get(employee["id"], []))
                     if slot is None:
                         result.update(state="blocked", reason="No available work window fits this task")
                         scheduled[task_id] = result
@@ -393,7 +412,9 @@ class Coordination:
                 self.db.execute("UPDATE reminders SET status='cancelled',reason=? WHERE workspace=? AND incident=? AND task=? AND revision=? AND status IN ('scheduled','delivered')", (task["reason"] or "Task started or completed", workspace, incident, task["taskId"], revision))
                 continue
             for kind, due in (("prepare", task["prepareAt"]), ("ready", task["startAt"])):
-                reminder_id = key(workspace, incident, revision, task["taskId"], kind)
+                active = self.db.execute("SELECT id FROM reminders WHERE workspace=? AND incident=? AND revision=? AND task=? AND kind=? AND employee=? AND status IN ('scheduled','delivered','acknowledged')", (workspace, incident, revision, task["taskId"], kind, task["employeeId"])).fetchone()
+                snooze_version = self.db.execute("SELECT MAX(until_at) FROM reminder_snoozes WHERE workspace=? AND incident=? AND task=? AND revision=?", (workspace, incident, task["taskId"], revision)).fetchone()[0]
+                reminder_id = active[0] if active else key(workspace, incident, revision, task["taskId"], kind, self.override_sequence(package), snooze_version)
                 self.db.execute("""INSERT INTO reminders VALUES (?,?,?,?,?,?,?,?,?,?,'scheduled',NULL,NULL,NULL)
                     ON CONFLICT(id) DO UPDATE SET due_at=excluded.due_at,start_at=excluded.start_at,end_at=excluded.end_at
                     WHERE reminders.status='scheduled'""", (reminder_id, workspace, incident, task["taskId"], task["employeeId"], revision, kind, due, task["startAt"], task["endAt"]))
@@ -418,7 +439,7 @@ class Coordination:
                     self.db.execute("UPDATE reminders SET status='superseded',reason='Ready reminder covers preparation' WHERE id=?", (reminder["id"],))
                     continue
                 employee = next(e for e in package["employees"] if e["id"] == reminder["employee"])
-                if not any(stamp(w["start"]) <= now < stamp(w["end"]) for w in employee["availability"]):
+                if not any(stamp(w["start"]) <= now < stamp(w["end"]) for w in self.available_windows(package, employee, now)):
                     continue  # Only explicit available work windows permit notifications.
                 recent = self.db.execute("SELECT created_at FROM notifications WHERE workspace=? AND employee=? AND created_at>? ORDER BY created_at DESC", (workspace, reminder["employee"], iso(now - timedelta(hours=1)))).fetchall()
                 if len(recent) >= 4 or (recent and stamp(recent[0][0]) > now - timedelta(minutes=5)):
@@ -439,6 +460,122 @@ class Coordination:
                 self.db.execute("UPDATE reminders SET status='delivered' WHERE id=?", (reminder["id"],))
         return self.state(workspace, incident, now)
 
+    def override_sequence(self, package):
+        return self.db.execute("SELECT COALESCE(MAX(sequence),0) FROM availability_overrides WHERE workspace=? AND (incident IS NULL OR incident=?)", (package["workspaceId"], package["incident"]["id"])).fetchone()[0]
+
+    def available_windows(self, package, employee, now):
+        windows = [(stamp(w["start"]), stamp(w["end"])) for w in employee["availability"]]
+        overrides = self.db.execute("SELECT start_at,end_at FROM availability_overrides WHERE workspace=? AND employee=? AND (incident IS NULL OR incident=?) AND withdrawn=0 AND expires_at>?", (package["workspaceId"], employee["id"], package["incident"]["id"], iso(now)))
+        for row in overrides:
+            left, right = stamp(row[0]), stamp(row[1])
+            pieces = []
+            for start, end in windows:
+                if right <= start or left >= end:
+                    pieces.append((start, end))
+                else:
+                    if start < left:
+                        pieces.append((start, left))
+                    if right < end:
+                        pieces.append((right, end))
+            windows = pieces
+        return [{"start": iso(start), "end": iso(end)} for start, end in windows]
+
+    def replay(self, workspace, actor, source, route):
+        required({"sourceId": source}, "sourceId")
+        row = self.db.execute("SELECT route,result FROM hook_requests WHERE workspace=? AND actor=? AND source_id=?", (workspace, actor, source)).fetchone()
+        if row:
+            if row["route"] != route:
+                raise Conflict("sourceId already used for another operation")
+            return json.loads(row["result"])
+
+    def receipt(self, workspace, actor, source, route, result):
+        self.db.execute("INSERT INTO hook_requests VALUES (?,?,?,?,?)", (workspace, actor, source, route, canonical(result)))
+        return result
+
+    def _conflicts(self, package, before, now, employee, cause):
+        after = self.plan(package, now)
+        old = {t["taskId"]: t for t in before}
+        newly_blocked = [t for t in after if t["state"] == "blocked" and old[t["taskId"]]["state"] != "blocked"]
+        tolerance = number(package.get("conflictToleranceMinutes", 0), "conflictToleranceMinutes", 0, 1440)
+        old_end = max((stamp(t["endAt"]) for t in before if t["endAt"]), default=stamp(now))
+        new_end = max((stamp(t["endAt"]) for t in after if t["endAt"]), default=stamp(now))
+        deadline = package["incident"].get("deadlineAt")
+        later = new_end > old_end + timedelta(minutes=tolerance)
+        overdue = bool(deadline and new_end > stamp(deadline) and new_end > old_end)
+        affected = newly_blocked or [t for t in after if t["endAt"] != old[t["taskId"]]["endAt"]]
+        for task in after:
+            previous = old[task["taskId"]]
+            if any(task[f] != previous[f] for f in ("startAt", "endAt", "state")):
+                self.db.execute("UPDATE reminders SET status='superseded',reason='Employee schedule changed' WHERE workspace=? AND incident=? AND task=? AND status IN ('scheduled','delivered')", (package["workspaceId"], package["incident"]["id"], task["taskId"]))
+        self.publish_schedule(package, now)
+        if affected and (newly_blocked or later or overdue):
+            primary = next((t for t in affected if t["employeeId"] == employee), affected[0])
+            name = next(e["name"] for e in package["employees"] if e["id"] == employee)
+            return self.emit(package, "conflict", {"employeeId": employee, "taskId": primary["taskId"],
+                "cause": cause, "affectedTasks": [t["taskId"] for t in affected], "revision": package["revision"],
+                "overrideSequence": self.override_sequence(package),
+                "plainText": f"{name}: {cause} affects {primary['name']} ({primary['taskId']}); " +
+                             ("work has no feasible window." if newly_blocked else "projected completion moved beyond tolerance or deadline.")}, now)
+
+    def update_availability(self, workspace, employee, data, now):
+        source = required(data, "sourceId")
+        route = "availability"
+        with self.db:
+            self._begin()
+            prior = self.replay(workspace, employee, source, route)
+            if prior is not None:
+                return prior
+            kind = data.get("kind")
+            if kind not in ("absence", "day_off", "late", "custom"):
+                raise InvalidInput("Unknown availability kind")
+            window = data.get("window", {})
+            start, end = stamp(window.get("start")), stamp(window.get("end"))
+            if end <= start:
+                raise InvalidInput("Availability override start must precede end")
+            reason = required(data, "reason", 1000)
+            incident = data.get("incidentId")
+            packages = [json.loads(r[0]) for r in self.db.execute("SELECT body FROM packages WHERE workspace=?", (workspace,))]
+            packages = [p for p in packages if (incident is None or p["incident"]["id"] == incident) and any(e["id"] == employee for e in p["employees"])]
+            if not packages:
+                raise InvalidInput("Unknown employee or incident")
+            zones = {p["timeZone"] for p in packages}
+            if len(zones) != 1 and kind != "custom":
+                raise InvalidInput("Use incidentId when incident time zones differ")
+            zone = ZoneInfo(packages[0]["timeZone"])
+            day = start.astimezone(zone).replace(hour=0, minute=0, second=0, microsecond=0)
+            if kind in ("absence", "day_off"):
+                start, end = stamp(day), stamp(day + timedelta(days=1))
+            elif kind == "late":
+                start, end = stamp(day), start  # window.start is the declared arrival time.
+            if end <= stamp(now):
+                raise InvalidInput("Override has already expired")
+            before = {p["incident"]["id"]: self.plan(p, now) for p in packages}
+            cursor = self.db.execute("INSERT INTO availability_overrides(workspace,employee,incident,kind,start_at,end_at,reason,source_id,expires_at) VALUES (?,?,?,?,?,?,?,?,?)", (workspace, employee, incident, kind, iso(start), iso(end), reason, source, iso(end)))
+            conflicts = []
+            for package in packages:
+                conflict = self._conflicts(package, before[package["incident"]["id"]], now, employee, "absence" if kind == "day_off" else kind)
+                self._refresh(package, now)
+                if conflict:
+                    conflicts.append(conflict)
+            return self.receipt(workspace, employee, source, route, {"overrideSequence": cursor.lastrowid, "conflicts": conflicts})
+
+    def snooze_hook(self, workspace, reminder_id, employee, until, now):
+        until, now = stamp(until), stamp(now)
+        with self.db:
+            self._begin()
+            row = self._owned_reminder(workspace, reminder_id, employee)
+            if row["status"] != "scheduled":
+                raise InvalidInput("Snooze a pending reminder")
+            if until <= max(now, stamp(row["due_at"]), stamp(row["snooze_until"]) if row["snooze_until"] else now):
+                raise InvalidInput("Snooze must delay the existing reminder")
+            package = self._package(workspace, row["incident"])
+            before = self.plan(package, now)
+            self.db.execute("UPDATE reminders SET snooze_until=?,reason='Recipient snoozed' WHERE id=?", (iso(until), reminder_id))
+            self.db.execute("INSERT INTO reminder_snoozes VALUES (?,?,?,?,?,?,?) ON CONFLICT(reminder_id) DO UPDATE SET until_at=excluded.until_at", (reminder_id, workspace, row["incident"], row["task"], row["revision"], employee, iso(until)))
+            conflict = self._conflicts(package, before, now, employee, "snooze")
+            self._refresh(package, now)
+            return {"reminderId": reminder_id, "accepted": True, "conflict": conflict}
+
     def emit(self, package, kind, body, now, identity=None):
         workspace, incident, revision = package["workspaceId"], package["incident"]["id"], package["revision"]
         item_id = key(workspace, incident, revision, kind, identity if identity is not None else body)
@@ -455,7 +592,7 @@ class Coordination:
     def publish_schedule(self, package, now):
         for task in self.plan(package, now):
             body = {field: task[field] for field in ("employeeId", "taskId", "name", "startAt", "endAt", "prepareAt", "dependsOn")}
-            body.update(location=package["incident"]["location"], state=task["state"], reason=task["reason"])
+            body.update(location=package["incident"]["location"], state=task["state"], reason=task["reason"], overrideSequence=self.override_sequence(package))
             self.emit(package, "schedule_entry", body, now)
 
     def outbox(self, workspace, after=0, types=None, limit=100):
