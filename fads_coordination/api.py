@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .core import Coordination, Conflict, InvalidInput, canonical, iso, required, stamp
+from .core import Coordination, Conflict, InvalidInput, canonical, iso, number, required, stamp
 
 
 def deliver_webhooks(app, url=None, secret=None, timeout=0.5, max_attempts=3, now=None):
@@ -62,7 +62,8 @@ class Hooks:
     def get(self, path, query):
         required(query, "callerId")
         if path == "/hooks/outbox":
-            return self.app.outbox(self.workspace, int(query.get("after", 0)), query.get("types", "").split(",") if query.get("types") else None)
+            return self.app.outbox(self.workspace, int(query.get("after", 0)), query.get("types", "").split(",") if query.get("types") else None,
+                                   employee_id=query.get("employeeId"))
         if path.startswith("/hooks/state/"):
             incident = unquote(path.removeprefix("/hooks/state/"))
             snapshot = self.app.state(self.workspace, incident, self.now)
@@ -92,10 +93,16 @@ class Hooks:
         if len(parts) == 5 and parts[:2] == ["hooks", "workflows"] and parts[4] == "confirm":
             return self.app.confirm_workflow(self.workspace, parts[2], int(parts[3]), required(data, "confirmedBy"), self.now)
         if len(parts) == 5 and parts[:2] == ["hooks", "tasks"]:
+            if parts[4] == "accept":
+                return self.app.accept(self.workspace, parts[2], parts[3], data, self.now)
+            if parts[4] == "delay":
+                return self.app.delay(self.workspace, parts[2], parts[3], data, self.now)
             if parts[4] == "done":
                 return self.app.done(self.workspace, parts[2], parts[3], data, self.now)
             if parts[4] == "proof":
                 return self.app.add_proof(self.workspace, parts[2], parts[3], data, self.now)
+        if len(parts) == 4 and parts[:2] == ["hooks", "notifications"] and parts[3] == "snooze":
+            return self.app.snooze_notification(self.workspace, parts[2], data, self.now)
         if len(parts) == 4 and parts[:2] == ["hooks", "employees"] and parts[3] == "availability":
             if required(data, "employeeId") != parts[2]:
                 raise InvalidInput("employeeId must match the path")
@@ -125,6 +132,34 @@ class HookHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def stream(self, hooks, query):
+        required(query, "callerId")
+        employee = required(query, "employeeId")
+        after = number(int(self.headers.get("Last-Event-ID") or query.get("after", 0)), "after", 0, 2**63-1)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(b": connected\n\n")
+            self.wfile.flush()
+            heartbeat = time.monotonic()
+            while True:
+                page = hooks.app.outbox(hooks.workspace, after, employee_id=employee)
+                for item in page["items"]:
+                    self.wfile.write(f"id: {item['cursor']}\nevent: {item['type']}\ndata: {canonical(item)}\n\n".encode())
+                after = page["nextCursor"]
+                if time.monotonic() - heartbeat >= 15:
+                    self.wfile.write(b": heartbeat\n\n")
+                    heartbeat = time.monotonic()
+                self.wfile.flush()
+                if len(page["items"]) < 100:
+                    time.sleep(1)
+        except (OSError, ConnectionError):
+            pass
+        finally:
+            self.close_connection = True
+
     def handle_request(self, post=False):
         if not self.allowed_host():
             return self.reply(403, {"error": "Local hosts only"})
@@ -147,6 +182,8 @@ class HookHandler(BaseHTTPRequestHandler):
             app = Coordination(self.server.database)
             config = {r[0]: r[1] for r in app.db.execute("SELECT key,value FROM settings")}
             hooks = Hooks(app, getattr(self.server, "workspace", config.get("workspace")), config.get("clock", datetime.now(timezone.utc)))
+            if parsed.path == "/hooks/stream" and not post:
+                return self.stream(hooks, query)
             if parsed.path.startswith("/hooks/"):
                 result = hooks.post(parsed.path, data) if post else hooks.get(parsed.path, query)
             elif post and parsed.path.startswith("/demo/") and hasattr(self, "demo_post"):

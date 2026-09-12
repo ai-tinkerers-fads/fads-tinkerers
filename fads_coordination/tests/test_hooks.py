@@ -39,8 +39,8 @@ class HookTests(unittest.TestCase):
     def test_phase2_assignments_outbox_cursor_and_inbox_sink(self):
         self.load()
         page = self.hooks.get('/hooks/outbox', {'callerId': 'fixture-reader'})
-        self.assertEqual(5, len(page['items']))
-        self.assertTrue(all(i['type'] == 'schedule_entry' for i in page['items']))
+        self.assertEqual(10, len(page['items']))
+        self.assertTrue(all(i['type'] in ('schedule_entry', 'assignment') for i in page['items']))
         self.load()
         self.assertEqual([], self.items(after=page['nextCursor']))
         self.app.tick(self.ws, self.incident, self.now)
@@ -81,7 +81,7 @@ class HookTests(unittest.TestCase):
         url, received = self.receiver()
         deliver_webhooks(self.app, url, 'fixture-secret', now=100)
         deliver_webhooks(self.app, url, 'fixture-secret', now=1000)
-        self.assertEqual(5, len(received))
+        self.assertEqual(10, len(received))
         for raw, headers in received:
             signature = hmac.new(b'fixture-secret', headers['X-FADS-Timestamp'].encode()+b'.'+raw, hashlib.sha256).hexdigest()
             self.assertEqual('sha256='+signature, headers['X-FADS-Signature'])
@@ -96,7 +96,7 @@ class HookTests(unittest.TestCase):
         url, received = self.receiver(500)
         for now in (100, 110, 120, 130):
             deliver_webhooks(self.app, url, 'fixture-secret', now=now)
-        self.assertEqual(15, len(received))
+        self.assertEqual(30, len(received))
         self.assertTrue(all(tuple(r)==('failed',3) for r in self.app.db.execute('SELECT state,attempt FROM webhook_deliveries')))
 
     def test_phase2_timeout_unknown_never_resent(self):
@@ -104,7 +104,7 @@ class HookTests(unittest.TestCase):
         url, received = self.receiver(delay=0.1)
         deliver_webhooks(self.app, url, 'fixture-secret', timeout=0.02)
         deliver_webhooks(self.app, url, 'fixture-secret', now=time.time()+100)
-        self.assertEqual(5, len(received))
+        self.assertEqual(10, len(received))
         self.assertTrue(all(tuple(r)==('unknown',1) for r in self.app.db.execute('SELECT state,attempt FROM webhook_deliveries')))
 
     def availability(self, employee, kind, start=None, end=None, source="fixture-override"):

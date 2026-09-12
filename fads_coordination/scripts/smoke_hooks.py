@@ -1,4 +1,4 @@
-"""Acceptance smoke for the hooks contract (handoff Phases 2-6) against a disposable local server.
+"""Acceptance smoke for the hooks contract (handoff Phases 2-8) against a disposable local server.
 
 Starts its own demo server and a local signed-webhook receiver, exercises the
 real HTTP hooks, and inspects the SQLite ledger. Never contacts external services.
@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import os
+import queue
 import sqlite3
 import subprocess
 import sys
@@ -191,6 +192,116 @@ def main():
             first = page["items"][0]
             rest = req(f"/hooks/outbox?callerId=smoke&types=schedule_entry&after={first['cursor']}")[1]
             check("outbox: resume after an individual item cursor", rest["items"] and rest["items"][0]["id"] == page["items"][1]["id"] and all(item["cursor"] > first["cursor"] for item in rest["items"]))
+
+            # Phase 8: local HTTP transport checks; browser acceptance belongs to Claude.
+            req("/demo/reset", {"callerId": "smoke-phase8"})
+            assignments = req("/hooks/outbox?callerId=smoke&types=assignment")[1]["items"]
+            check("notifications: five assigned packages with implemented actions", len(assignments) == 5 and all(
+                item["body"]["kind"] == "assigned" and [a["id"] for a in item["body"]["actions"]] == ["accept", "snooze", "delay", "open"] for item in assignments))
+            req("/hooks/assignments", {"callerId": "smoke", **fixture})
+            check("notifications: identical repost emits no assignments", count("SELECT COUNT(*) n FROM outbox WHERE type='assignment'") == 5)
+            alex = next(item for item in assignments if item["body"]["employeeId"] == "alex")
+            buttons = {a["id"]: a for a in alex["body"]["actions"]}
+            accept = {**buttons["accept"]["body"], "sourceId": "phase8-accept"}
+            status, accepted = req(buttons["accept"]["url"], accept)
+            again, repeated = req(buttons["accept"]["url"], accept)
+            check("accept: timestamp, one event, replay, work remains incomplete", status == again == 200 and accepted == repeated and
+                  count("SELECT COUNT(*) n FROM outbox WHERE type='acceptance'") == 1 and
+                  state()["package"]["assignments"][0].get("acceptedAt") == accepted["body"]["acceptedAt"] and state()["schedule"][0]["status"] != "complete")
+            check("accept: wrong employee rejected", req(buttons["accept"]["url"], {"employeeId": "sam", "sourceId": "wrong"})[0] == 400)
+            status, _ = req(buttons["snooze"]["url"], {**buttons["snooze"]["body"], "sourceId": "phase8-snooze"})
+            req("/demo/action", {"action": "advance", "minutes": 4})
+            repeats = lambda: [i for i in req("/hooks/outbox?callerId=smoke&types=assignment")[1]["items"] if i.get("repeatOf") == alex["id"]]
+            check("notification snooze: no repeat before five simulated minutes", status == 200 and not repeats())
+            req("/demo/action", {"action": "advance", "minutes": 1})
+            check("notification snooze: repeat at five minutes", len(repeats()) == 1)
+            for index in (2, 3):
+                req(buttons["snooze"]["url"], {**buttons["snooze"]["body"], "sourceId": "phase8-snooze-" + str(index)})
+            status, error = req(buttons["snooze"]["url"], {**buttons["snooze"]["body"], "sourceId": "phase8-snooze-4"})
+            check("notification snooze: fourth refused with delay guidance", status == 409 and "delay" in error.get("error", ""))
+            sam = next(item for item in assignments if item["body"]["employeeId"] == "sam")
+            delay = next(a for a in sam["body"]["actions"] if a["id"] == "delay")
+            check("delay: missing note rejected", req(delay["url"], {**delay["body"], "minutes": 30, "sourceId": "no-note"})[0] == 400)
+            old_ids = [r["id"] for r in state()["reminders"] if r["taskId"] == "transport" and r["status"] == "scheduled"]
+            data = {**delay["body"], "minutes": 30, "note": "truck in the shop", "sourceId": "phase8-delay"}
+            status, delayed = req(delay["url"], data)
+            again, repeated = req(delay["url"], data)
+            check("delay: one Phase 3 override, conflict includes note, reminders superseded", status == again == 200 and delayed == repeated and
+                  count("SELECT COUNT(*) n FROM availability_overrides") == 1 and
+                  any("truck in the shop" in i["body"]["plainText"] for i in delayed.get("conflicts", [])) and
+                  all(r["status"] == "superseded" for r in state()["reminders"] if r["id"] in old_ids))
+
+            # A background reader holds the real stream open while ordinary hooks run.
+            def open_stream(after, last_id=None):
+                headers = {"Last-Event-ID": str(last_id)} if last_id is not None else {}
+                response = urlopen(Request(base + f"/hooks/stream?callerId=smoke&employeeId=alex&after={after}", headers=headers), timeout=20)
+                events = queue.Queue()
+                def read():
+                    try:
+                        with response:
+                            for line in response:
+                                if line.startswith(b"data: "):
+                                    events.put(json.loads(line[6:]))
+                    except (OSError, ValueError):
+                        pass  # Disposable server shutdown closes the readers.
+                threading.Thread(target=read, daemon=True).start()
+                return events, response.headers.get_content_type()
+
+            def await_assignment(events, seconds=3):
+                deadline = time.monotonic() + seconds
+                seen = []
+                while time.monotonic() < deadline:
+                    try:
+                        item = events.get(timeout=max(0.01, deadline-time.monotonic()))
+                    except queue.Empty:
+                        break
+                    seen.append(item)
+                    if item["type"] == "assignment":
+                        break
+                return seen
+
+            top = count("SELECT MAX(cursor) n FROM outbox")
+            events, content_type = open_stream(top)
+            began = time.monotonic()
+            health = req("/health")[0]
+            check("stream: text/event-stream; health responds within one second", content_type == "text/event-stream" and health == 200 and time.monotonic()-began < 1)
+            changed = copy.deepcopy(fixture)
+            changed["revision"] = 2
+            changed["employees"][0]["availability"][0]["start"] = "2026-09-14T09:20:00-07:00"
+            began = time.monotonic()
+            req("/hooks/assignments", {"callerId": "smoke", **changed})
+            received = await_assignment(events)
+            check("stream: new assignment arrives within three seconds, Alex only", time.monotonic()-began < 3 and
+                  any(i["type"] == "assignment" for i in received) and all(i["body"]["employeeId"] == "alex" for i in received))
+            last_id = count("SELECT MAX(cursor) n FROM outbox")
+            changed["revision"] = 3
+            changed["employees"][0]["availability"][0]["start"] = "2026-09-14T09:25:00-07:00"
+            req("/hooks/assignments", {"callerId": "smoke", **changed})
+            resumed, _ = open_stream(0, last_id=last_id)
+            replayed = await_assignment(resumed)
+            check("stream: Last-Event-ID overrides after and replays only unseen events", bool(replayed) and all(i["cursor"] > last_id for i in replayed) and any(i["type"] == "assignment" for i in replayed))
+            jordan_only = copy.deepcopy(fixture)
+            jordan_only["incident"]["id"] = "jordan-only"
+            jordan_only["workflow"].update(id="single-load", tasks=[{**fixture["workflow"]["tasks"][2], "dependsOn": []}])
+            jordan_only["employees"] = [e for e in fixture["employees"] if e["id"] == "jordan"]
+            jordan_only["assignments"] = [{**a, "incidentId": "jordan-only"} for a in fixture["assignments"] if a["taskId"] == "load"]
+            top = count("SELECT MAX(cursor) n FROM outbox")
+            isolated, _ = open_stream(top)
+            req("/hooks/assignments", {"callerId": "smoke", **jordan_only})
+            check("stream: Jordan-only incident sends nothing to Alex", not await_assignment(isolated, seconds=1.2) and
+                  req(f"/hooks/outbox?callerId=smoke&employeeId=alex&after={top}")[1]["items"] == [])
+            notification_items = req("/hooks/outbox?callerId=smoke&types=assignment,reminder,conflict")[1]["items"]
+            from urllib.parse import parse_qs, urlparse
+            links_ok = True
+            for item in notification_items:
+                action = next((a for a in item["body"]["actions"] if a["id"] == "open"), {})
+                url = urlparse(action.get("url", ""))
+                links_ok &= action.get("kind") == "link" and url.path == "/web/employee.html" and parse_qs(url.query) == {"employeeId": [item["body"]["employeeId"]], "package": [item["id"]]}
+            with urlopen(base + buttons["open"]["url"], timeout=3) as response:
+                check("open web: every notification links to its employee card; URL serves page", links_ok and response.status == 200 and response.headers.get_content_type() == "text/html")
+            for path, mime in (("/web/employee.html?employeeId=alex", "text/html"), ("/web/sw.js", "text/javascript")):
+                with urlopen(base + path, timeout=3) as response:
+                    check("client: " + path + " served with correct type", response.status == 200 and response.headers.get_content_type() == mime and bool(response.read()))
         finally:
             server.terminate()
             try:

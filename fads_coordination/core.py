@@ -12,6 +12,7 @@ import sqlite3
 import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -243,6 +244,12 @@ class Coordination:
         CREATE TABLE IF NOT EXISTS hook_requests (
             workspace TEXT, actor TEXT, source_id TEXT, route TEXT, result TEXT,
             PRIMARY KEY(workspace,actor,source_id));
+        CREATE TABLE IF NOT EXISTS task_acceptances (
+            workspace TEXT, incident TEXT, task TEXT, employee TEXT, accepted_at TEXT,
+            PRIMARY KEY(workspace,incident,task));
+        CREATE TABLE IF NOT EXISTS notification_snoozes (
+            id TEXT PRIMARY KEY, workspace TEXT, incident TEXT, original_id TEXT,
+            due_at TEXT, emitted INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS outbox (
             cursor INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, type TEXT,
             workspace TEXT, incident TEXT, revision INTEGER, body TEXT, created_at TEXT);
@@ -266,6 +273,12 @@ class Coordination:
         package = self.get_package(workspace, incident)
         if package is None:
             raise InvalidInput("Unknown incident")
+        for assignment in package["assignments"]:
+            assignment.pop("acceptedAt", None)
+            row = self.db.execute("SELECT accepted_at FROM task_acceptances WHERE workspace=? AND incident=? AND task=? AND employee=?",
+                                  (workspace, incident, assignment["taskId"], assignment["employeeId"])).fetchone()
+            if row:
+                assignment["acceptedAt"] = row[0]
         for row in self.db.execute("SELECT task,body FROM task_completions WHERE workspace=? AND incident=? AND workflow=? AND version=?", (workspace, incident, package["workflow"]["id"], package["workflow"]["version"])):
             for assignment in package["assignments"]:
                 if assignment["taskId"] == row["task"]:
@@ -299,6 +312,11 @@ class Coordination:
             if (old["workflow"]["id"], old["workflow"]["version"]) == (package["workflow"]["id"], package["workflow"]["version"]) and canonical(old["workflow"]) != canonical(package["workflow"]):
                 raise Conflict("Change the workflow version when changing its approved definition")
         self.db.execute("INSERT INTO packages VALUES (?,?,?,?) ON CONFLICT(workspace,incident) DO UPDATE SET revision=excluded.revision,body=excluded.body", (workspace, incident, package["revision"], canonical(package)))
+        for task_id, previous in before.items():
+            if package.get("cancelled") or not any(a["taskId"] == task_id and a["employeeId"] == previous["employeeId"] for a in package["assignments"]):
+                self.db.execute("DELETE FROM task_acceptances WHERE workspace=? AND incident=? AND task=?", (workspace, incident, task_id))
+                self.db.execute("UPDATE notification_snoozes SET emitted=1 WHERE workspace=? AND incident=? AND original_id IN (SELECT id FROM outbox WHERE workspace=? AND incident=? AND json_extract(body,'$.body.taskId')=?)",
+                                (workspace, incident, workspace, incident, task_id))
         workflow = package["workflow"]
         assignments = {a["taskId"]: a for a in package["assignments"]}
         for task in workflow["tasks"]:
@@ -322,6 +340,7 @@ class Coordination:
             self.db.execute("UPDATE reminders SET status='superseded',reason='Task removed' WHERE workspace=? AND incident=? AND task=? AND status IN ('scheduled','delivered')", (workspace, incident, task_id))
         self._refresh(effective, now)
         self.publish_schedule(effective, now)
+        self.publish_assignments(effective, before, now)
 
     def register_workflow(self, package, now, provenance=None):
         workflow = package["workflow"]
@@ -423,6 +442,7 @@ class Coordination:
             frozen = self.db.execute("SELECT body FROM forecasts WHERE workspace=? AND incident=? AND task=? AND revision=?", (workspace, package["incident"]["id"], task_id, package["revision"])).fetchone()
             profile = json.loads(frozen[0]) if frozen else next_profile
             result = {"taskId": task_id, "name": task["name"], "employeeId": employee["id"], "employeeName": employee["name"],
+                      "acceptedAt": assignment.get("acceptedAt"),
                       "status": assignment["status"], "dependsOn": task.get("dependsOn", []),
                       "estimatedMinutes": profile["recommendedMinutes"], "estimateEvidence": profile, "nextEstimate": next_profile,
                       "lessons": self.lessons(workspace, workflow["id"], workflow["version"], task_id, package["context"], now),
@@ -506,6 +526,7 @@ class Coordination:
             self._begin()
             package = self._package(workspace, incident)
             self._refresh(package, now)
+            self._repeat_notifications(package, now)
             assignments = {a["taskId"]: a for a in package["assignments"]}
             tasks = {t["taskId"]: t for t in self.plan(package, now)}
             due = self.db.execute("SELECT * FROM reminders WHERE workspace=? AND incident=? AND status='scheduled' AND due_at<=? AND (snooze_until IS NULL OR snooze_until<=?) ORDER BY CASE kind WHEN 'ready' THEN 0 ELSE 1 END,due_at,id", (workspace, incident, iso(now), iso(now))).fetchall()
@@ -573,7 +594,7 @@ class Coordination:
         self.db.execute("INSERT INTO hook_requests VALUES (?,?,?,?,?)", (workspace, actor, source, route, canonical(result)))
         return result
 
-    def _conflicts(self, package, before, now, employee, cause):
+    def _conflicts(self, package, before, now, employee, cause, note=None):
         after = self.plan(package, now)
         old = {t["taskId"]: t for t in before}
         newly_blocked = [t for t in after if t["state"] == "blocked" and old[t["taskId"]]["state"] != "blocked"]
@@ -589,6 +610,7 @@ class Coordination:
             if any(task[f] != previous[f] for f in ("startAt", "endAt", "state")):
                 self.db.execute("UPDATE reminders SET status='superseded',reason='Employee schedule changed' WHERE workspace=? AND incident=? AND task=? AND status IN ('scheduled','delivered')", (package["workspaceId"], package["incident"]["id"], task["taskId"]))
         self.publish_schedule(package, now)
+        self.publish_assignments(package, old, now)
         if affected and (newly_blocked or later or overdue):
             primary = next((t for t in affected if t["employeeId"] == employee), affected[0])
             name = next(e["name"] for e in package["employees"] if e["id"] == employee)
@@ -596,51 +618,56 @@ class Coordination:
                 "cause": cause, "affectedTasks": [t["taskId"] for t in affected], "revision": package["revision"],
                 "overrideSequence": self.override_sequence(package),
                 "plainText": f"{name}: {cause} affects {primary['name']} ({primary['taskId']}); " +
-                             ("work has no feasible window." if newly_blocked else "projected completion moved beyond tolerance or deadline.")}, now)
+                             ("work has no feasible window." if newly_blocked else "projected completion moved beyond tolerance or deadline.") +
+                             (" Note: " + note if note else "")}, now)
 
     def update_availability(self, workspace, employee, data, now):
-        source = required(data, "sourceId")
-        route = "availability"
         with self.db:
             self._begin()
-            prior = self.replay(workspace, employee, source, route)
-            if prior is not None:
-                return prior
-            kind = data.get("kind")
-            if kind not in ("absence", "day_off", "late", "custom"):
-                raise InvalidInput("Unknown availability kind")
-            window = data.get("window", {})
-            if not isinstance(window, dict):
-                raise InvalidInput("window must be an object")
-            start, end = stamp(window.get("start")), stamp(window.get("end"))
-            if end <= start:
-                raise InvalidInput("Availability override start must precede end")
-            reason = required(data, "reason", 1000)
-            incident = data.get("incidentId")
-            packages = [self._package(workspace, r[0]) for r in self.db.execute("SELECT incident FROM packages WHERE workspace=?", (workspace,))]
-            packages = [p for p in packages if (incident is None or p["incident"]["id"] == incident) and any(e["id"] == employee for e in p["employees"])]
-            if not packages:
-                raise InvalidInput("Unknown employee or incident")
-            zones = {p["timeZone"] for p in packages}
-            if len(zones) != 1 and kind != "custom":
-                raise InvalidInput("Use incidentId when incident time zones differ")
-            zone = ZoneInfo(packages[0]["timeZone"])
-            day = start.astimezone(zone).replace(hour=0, minute=0, second=0, microsecond=0)
-            if kind in ("absence", "day_off"):
-                start, end = stamp(day), stamp(day + timedelta(days=1))
-            elif kind == "late":
-                start, end = stamp(day), start  # window.start is the declared arrival time.
-            if end <= stamp(now):
-                raise InvalidInput("Override has already expired")
-            before = {p["incident"]["id"]: self.plan(p, now) for p in packages}
-            cursor = self.db.execute("INSERT INTO availability_overrides(workspace,employee,incident,kind,start_at,end_at,reason,source_id,expires_at) VALUES (?,?,?,?,?,?,?,?,?)", (workspace, employee, incident, kind, iso(start), iso(end), reason, source, iso(end)))
-            conflicts = []
-            for package in packages:
-                conflict = self._conflicts(package, before[package["incident"]["id"]], now, employee, "absence" if kind == "day_off" else kind)
-                self._refresh(package, now)
-                if conflict:
-                    conflicts.append(conflict)
-            return self.receipt(workspace, employee, source, route, {"overrideSequence": cursor.lastrowid, "conflicts": conflicts})
+            return self._update_availability(workspace, employee, data, now)
+
+    def _update_availability(self, workspace, employee, data, now, route="availability", anchor=None):
+        source = required(data, "sourceId")
+        prior = self.replay(workspace, employee, source, route)
+        if prior is not None:
+            return prior
+        kind = data.get("kind")
+        if kind not in ("absence", "day_off", "late", "custom"):
+            raise InvalidInput("Unknown availability kind")
+        window = data.get("window", {})
+        if not isinstance(window, dict):
+            raise InvalidInput("window must be an object")
+        start, end = stamp(window.get("start")), stamp(window.get("end"))
+        if end <= start:
+            raise InvalidInput("Availability override start must precede end")
+        reason = required(data, "reason", 1000)
+        incident = data.get("incidentId")
+        packages = [self._package(workspace, r[0]) for r in self.db.execute("SELECT incident FROM packages WHERE workspace=?", (workspace,))]
+        packages = [p for p in packages if (incident is None or p["incident"]["id"] == incident) and any(e["id"] == employee for e in p["employees"])]
+        if not packages:
+            raise InvalidInput("Unknown employee or incident")
+        zones = {p["timeZone"] for p in packages}
+        if len(zones) != 1 and kind != "custom":
+            raise InvalidInput("Use incidentId when incident time zones differ")
+        zone = ZoneInfo(packages[0]["timeZone"])
+        day = start.astimezone(zone).replace(hour=0, minute=0, second=0, microsecond=0)
+        if kind in ("absence", "day_off"):
+            start, end = stamp(day), stamp(day + timedelta(days=1))
+        elif kind == "late" and anchor is None:
+            start, end = stamp(day), start  # window.start is the declared arrival time.
+        if anchor is not None:
+            start = stamp(anchor)
+        if end <= stamp(now):
+            raise InvalidInput("Override has already expired")
+        before = {p["incident"]["id"]: self.plan(p, now) for p in packages}
+        cursor = self.db.execute("INSERT INTO availability_overrides(workspace,employee,incident,kind,start_at,end_at,reason,source_id,expires_at) VALUES (?,?,?,?,?,?,?,?,?)", (workspace, employee, incident, kind, iso(start), iso(end), reason, source, iso(end)))
+        conflicts = []
+        for package in packages:
+            conflict = self._conflicts(package, before[package["incident"]["id"]], now, employee, "absence" if kind == "day_off" else kind, reason)
+            self._refresh(package, now)
+            if conflict:
+                conflicts.append(conflict)
+        return self.receipt(workspace, employee, source, route, {"overrideSequence": cursor.lastrowid, "conflicts": conflicts})
 
     def snooze_hook(self, workspace, reminder_id, employee, until, now):
         until, now = stamp(until), stamp(now)
@@ -663,11 +690,183 @@ class Coordination:
         row = self.db.execute("SELECT value FROM settings WHERE key=?", ("reset_epoch:" + workspace,)).fetchone()
         return row[0] if row else None
 
-    def emit(self, package, kind, body, now, identity=None):
+    def _owned_task(self, workspace, incident, task_id, employee):
+        package = self._package(workspace, incident)
+        task = next((a for a in package["assignments"] if a["taskId"] == task_id), None)
+        if task is None or task["employeeId"] != employee:
+            raise InvalidInput("Task is not assigned to this employee")
+        if package.get("cancelled") or task["status"] == "complete":
+            raise Conflict("Task is no longer active")
+        return package, task
+
+    def accept(self, workspace, incident, task_id, data, now):
+        employee, source = required(data, "employeeId"), required(data, "sourceId")
+        route = f"accept:{incident}:{task_id}"
+        with self.db:
+            self._begin()
+            prior = self.replay(workspace, employee, source, route)
+            if prior is not None:
+                return prior
+            package, task = self._owned_task(workspace, incident, task_id, employee)
+            if task.get("acceptedAt"):
+                row = self.db.execute("SELECT body FROM outbox WHERE workspace=? AND incident=? AND type='acceptance' AND json_extract(body,'$.body.taskId')=? AND json_extract(body,'$.body.employeeId')=? AND json_extract(body,'$.body.acceptedAt')=? ORDER BY cursor DESC LIMIT 1",
+                                      (workspace, incident, task_id, employee, task["acceptedAt"])).fetchone()
+                return self.receipt(workspace, employee, source, route, json.loads(row[0]))
+            accepted_at = task.get("acceptedAt") or iso(now)
+            self.db.execute("INSERT OR IGNORE INTO task_acceptances VALUES (?,?,?,?,?)", (workspace, incident, task_id, employee, accepted_at))
+            result = self.emit(package, "acceptance", {"employeeId": employee, "taskId": task_id, "acceptedAt": accepted_at}, now,
+                               (task_id, employee, accepted_at))
+            return self.receipt(workspace, employee, source, route, result)
+
+    def delay(self, workspace, incident, task_id, data, now):
+        employee, source = required(data, "employeeId"), required(data, "sourceId")
+        route = f"delay:{incident}:{task_id}"
+        with self.db:
+            self._begin()
+            prior = self.replay(workspace, employee, source, route)
+            if prior is not None:
+                return prior
+            package, assignment = self._owned_task(workspace, incident, task_id, employee)
+            if assignment["status"] == "in_progress":
+                raise Conflict("Task already started")
+            note = required(data, "note", 500)
+            task = next(t for t in self.plan(package, now) if t["taskId"] == task_id)
+            if not task["startAt"]:
+                raise Conflict("Task has no planned start; dispatcher must resolve the conflict")
+            start = stamp(task["startAt"])
+            if ("minutes" in data) == ("until" in data):
+                raise InvalidInput("Supply minutes or until, exclusively")
+            end = stamp(data["until"]) if "until" in data else start + timedelta(minutes=number(data["minutes"], "minutes", 1, 10080))
+            return self._update_availability(workspace, employee, {
+                "sourceId": source, "incidentId": incident, "kind": "late", "reason": note,
+                "window": {"start": iso(start), "end": iso(end)}}, now, route=route, anchor=start)
+
+    def _latest_start(self, package, task_id, now):
+        """Backward fit through work windows, dependencies and planned employee order."""
+        schedule = self.plan(package, now)
+        latest, next_employee = {}, {}
+        employees = {e["id"]: e for e in package["employees"]}
+        for task in reversed(schedule):
+            if task["status"] == "complete":
+                continue
+            windows = self.available_windows(package, employees[task["employeeId"]], now)
+            bounds = [stamp(w["end"]) for w in windows]
+            if task["state"] == "blocked" or not bounds:
+                return None
+            end = max(bounds)
+            constraints = [latest[t["taskId"]] for t in schedule if task["taskId"] in t["dependsOn"] and t["taskId"] in latest]
+            if task["employeeId"] in next_employee:
+                constraints.append(next_employee[task["employeeId"]])
+            if package["incident"].get("deadlineAt"):
+                constraints.append(stamp(package["incident"]["deadlineAt"]))
+            end = min([end] + constraints)
+            duration = timedelta(minutes=task["estimatedMinutes"])
+            starts = [min(stamp(w["end"]), end) - duration for w in windows
+                      if min(stamp(w["end"]), end) - duration >= max(stamp(w["start"]), stamp(task["startAt"]))]
+            if not starts:
+                return None
+            latest[task["taskId"]] = next_employee[task["employeeId"]] = max(starts)
+        return latest.get(task_id)
+
+    def snooze_notification(self, workspace, package_id, data, now):
+        employee, source = required(data, "employeeId"), required(data, "sourceId")
+        route = "notification-snooze:" + package_id
+        with self.db:
+            self._begin()
+            prior = self.replay(workspace, employee, source, route)
+            if prior is not None:
+                return prior
+            minutes = number(data.get("minutes"), "minutes", 1, 60)
+            row = self.db.execute("SELECT body FROM outbox WHERE workspace=? AND id=?", (workspace, package_id)).fetchone()
+            item = json.loads(row[0]) if row else None
+            if not item or item["type"] not in ("assignment", "reminder", "conflict") or item["body"].get("employeeId") != employee:
+                raise InvalidInput("Notification is not delivered to this employee")
+            if item["type"] == "assignment" and item["body"]["kind"] == "removed":
+                raise Conflict("Assignment was removed")
+            original = item.get("repeatOf", item["id"])
+            removed = self.db.execute("SELECT 1 FROM outbox WHERE workspace=? AND incident=? AND type='assignment' AND json_extract(body,'$.body.taskId')=? AND json_extract(body,'$.body.employeeId')=? AND json_extract(body,'$.body.kind')='removed' AND cursor>(SELECT cursor FROM outbox WHERE id=?) LIMIT 1",
+                                      (workspace, item["incidentId"], item["body"]["taskId"], employee, original)).fetchone()
+            if removed:
+                raise Conflict("Notification belongs to a removed assignment")
+            package, task = self._owned_task(workspace, item["incidentId"], item["body"]["taskId"], employee)
+            if task["status"] == "in_progress":
+                raise Conflict("Task already started; use delay through the dispatcher")
+            count = self.db.execute("SELECT COUNT(*) FROM notification_snoozes WHERE workspace=? AND original_id=?", (workspace, original)).fetchone()[0]
+            if count >= 3:
+                raise Conflict("Three snoozes already used; use delay instead")
+            due = stamp(now) + timedelta(minutes=minutes)
+            latest = self._latest_start(package, task["taskId"], now)
+            if latest is None or due > latest:
+                raise Conflict("Snooze passes the latest feasible start; use delay instead")
+            repeat_id = key(original, source, employee)
+            self.db.execute("INSERT INTO notification_snoozes(id,workspace,incident,original_id,due_at) VALUES (?,?,?,?,?)",
+                            (repeat_id, workspace, item["incidentId"], original, iso(due)))
+            return self.receipt(workspace, employee, source, route, {"packageId": package_id, "repeatOf": original, "dueAt": iso(due)})
+
+    def _repeat_notifications(self, package, now):
+        rows = self.db.execute("SELECT s.*,o.body FROM notification_snoozes s JOIN outbox o ON o.id=s.original_id WHERE s.workspace=? AND s.incident=? AND s.emitted=0 AND s.due_at<=? ORDER BY s.due_at,s.id",
+                               (package["workspaceId"], package["incident"]["id"], iso(now))).fetchall()
+        for row in rows:
+            item = json.loads(row["body"])
+            body = dict(item["body"])
+            try:
+                _, task = self._owned_task(package["workspaceId"], package["incident"]["id"], body["taskId"], body["employeeId"])
+                if task["status"] != "in_progress":
+                    self.emit({**package, "revision": item["revision"]}, item["type"], body, now, row["id"], repeat_of=row["original_id"])
+            except (InvalidInput, Conflict):
+                pass  # Never revive cancelled, completed or reassigned work.
+            self.db.execute("UPDATE notification_snoozes SET emitted=1 WHERE id=?", (row["id"],))
+
+    def notification_actions(self, package, kind, body, item_id, original=None):
+        employee = {"employeeId": body["employeeId"]}
+        page_url = "/web/employee.html?" + urlencode({**employee, "package": item_id})
+        open_action = {"id": "open", "label": "Open web", "kind": "link", "url": page_url}
+        if kind == "assignment" and body.get("kind") == "removed":
+            return [open_action]
+        task = next((a for a in package["assignments"] if a["taskId"] == body["taskId"] and a["employeeId"] == body["employeeId"]), None)
+        if not task or package.get("cancelled") or task["status"] == "complete":
+            return [open_action]
+        url = "/hooks/tasks/" + quote(package["incident"]["id"], safe="") + "/" + quote(task["taskId"], safe="")
+        actions = []
+        if not task.get("acceptedAt"):
+            actions.append({"id": "accept", "label": "Accept", "method": "POST", "url": url + "/accept", "body": employee})
+        count = self.db.execute("SELECT COUNT(*) FROM notification_snoozes WHERE workspace=? AND original_id=?", (package["workspaceId"], original or item_id)).fetchone()[0]
+        if count < 3 and task["status"] != "in_progress":
+            actions.append({"id": "snooze", "label": "Snooze 5 min", "method": "POST", "url": f"/hooks/notifications/{item_id}/snooze", "body": {**employee, "minutes": 5}})
+        if task["status"] != "in_progress":
+            actions.append({"id": "delay", "label": "Delay…", "method": "POST", "url": url + "/delay", "body": employee,
+                            "needs": ["minutes", "note"], "resolveUrl": page_url + "&action=delay"})
+        return actions + [open_action]
+
+    def publish_assignments(self, package, before, now):
+        after = {t["taskId"]: t for t in self.plan(package, now)} if not package.get("cancelled") else {}
+        for task_id in dict.fromkeys([*before, *after]):
+            old, new = before.get(task_id), after.get(task_id)
+            changed_owner = old and new and old["employeeId"] != new["employeeId"]
+            changes = []
+            if old and (not new or changed_owner):
+                changes.append(("removed", old))
+            if new and (not old or changed_owner):
+                changes.append(("assigned", new))
+            elif old and new and any(old[f] != new[f] for f in ("startAt", "endAt")):
+                changes.append(("rescheduled", new))
+            for kind, task in changes:
+                body = {f: task[f] for f in ("employeeId", "taskId", "name", "startAt", "endAt", "prepareAt")}
+                when = stamp(task["startAt"]).astimezone(ZoneInfo(package["timeZone"])).strftime("%H:%M") if task["startAt"] else "unscheduled"
+                body.update(kind=kind, previousEmployeeId=old["employeeId"] if old else None, revision=package["revision"],
+                            plainText=f"{kind.capitalize()}: {task['name']} {when}")
+                self.emit(package, "assignment", body, now, (body, self.override_sequence(package)))
+
+    def emit(self, package, kind, body, now, identity=None, repeat_of=None):
         workspace, incident, revision = package["workspaceId"], package["incident"]["id"], package["revision"]
         item_id = key(workspace, incident, revision, kind, identity if identity is not None else body, self.testing_epoch(workspace))
+        body = dict(body)
+        if kind in ("assignment", "reminder", "conflict"):
+            body["actions"] = self.notification_actions(package, kind, body, item_id, repeat_of)
         item = {"type": kind, "id": item_id, "createdAt": iso(now), "workspaceId": workspace,
                 "incidentId": incident, "revision": revision, "body": body}
+        if repeat_of:
+            item["repeatOf"] = repeat_of
         self.db.execute("INSERT OR IGNORE INTO outbox(id,type,workspace,incident,revision,body,created_at) VALUES (?,?,?,?,?,?,?)",
                         (item_id, kind, workspace, incident, revision, canonical(item), iso(now)))
         self.db.execute("INSERT OR IGNORE INTO webhook_deliveries(package_id) VALUES (?)", (item_id,))
@@ -682,10 +881,14 @@ class Coordination:
             body.update(location=package["incident"]["location"], state=task["state"], reason=task["reason"], overrideSequence=self.override_sequence(package))
             self.emit(package, "schedule_entry", body, now)
 
-    def outbox(self, workspace, after=0, types=None, limit=100):
+    def outbox(self, workspace, after=0, types=None, limit=100, employee_id=None):
         number(after, "after", 0, 2**63-1)
         number(limit, "limit", 1, 500)
         clauses, args = ["workspace=?", "cursor>?"], [workspace, after]
+        if employee_id is not None:
+            required({"employeeId": employee_id}, "employeeId")
+            clauses.append("json_extract(body,'$.body.employeeId')=?")
+            args.append(employee_id)
         if types:
             clauses.append("type IN (" + ",".join("?" for _ in types) + ")")
             args.extend(types)
@@ -916,6 +1119,7 @@ class Coordination:
         return {"demo": True, "now": iso(now), "package": package, "incidentStatus": incident_status,
                 "estimatedResolutionAt": max(t["endAt"] for t in schedule) if all(t["endAt"] for t in schedule) else None,
                 "schedule": schedule, "reminders": reminders,
+                "conflicts": [json.loads(r[0]) for r in self.db.execute("SELECT body FROM outbox WHERE workspace=? AND incident=? AND type='conflict' ORDER BY cursor DESC LIMIT 20", (workspace, incident))],
                 "workflows": self.workflow_catalog(workspace),
                 "proofs": [dict(r) for r in self.db.execute("SELECT task AS taskId,employee AS employeeId,kind,ref,sha256,note,received_at AS receivedAt FROM proofs WHERE workspace=? AND incident=?", (workspace, incident))],
                 "notifications": [{"id": n["id"], "reminderId": n["reminder_id"], "employeeId": n["employee"], "taskId": n["task"], "kind": n["kind"], "body": n["body"], "createdAt": n["created_at"], "status": n["status"], "delivery": "simulated_in_app"} for n in notes],

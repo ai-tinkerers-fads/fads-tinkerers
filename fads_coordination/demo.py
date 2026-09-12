@@ -5,7 +5,7 @@ import json
 import sys
 import uuid
 from datetime import datetime, timedelta
-from http.server import HTTPServer
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -51,7 +51,7 @@ def reset_testing(app, caller):
         app.db.execute("DELETE FROM webhook_deliveries WHERE package_id IN (SELECT id FROM outbox WHERE workspace=?)", (workspace,))
         for table in ("notifications", "reminders", "outbox", "forecasts", "outcomes", "lesson_sources", "lessons",
                       "suppressed", "proofs", "task_completions", "availability_overrides", "reminder_snoozes",
-                      "hook_requests", "document_versions", "workflows", "packages"):
+                      "task_acceptances", "notification_snoozes", "hook_requests", "document_versions", "workflows", "packages"):
             app.db.execute(f"DELETE FROM {table} WHERE workspace=?", (workspace,))
         for name, value in {"workspace": workspace, "incident": incident, "clock": iso(now), "reset_epoch:" + workspace: uuid.uuid4().hex}.items():
             app.db.execute("INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (name, value))
@@ -145,9 +145,9 @@ def action(app, data):
     return app.tick(workspace, incident, now)
 
 
-class DemoServer(HTTPServer):
-    # Single request dispatcher; library transactions also protect concurrent
-    # callers. A real deployment needs its own authentication and worker host.
+class DemoServer(ThreadingHTTPServer):
+    daemon_threads = True
+
     def service_actions(self):
         app = Coordination(self.database)
         try:
@@ -163,10 +163,13 @@ class DemoServer(HTTPServer):
 
 class Handler(HookHandler):
     def demo_get(self, path, app):
-        if path == "/":
-            body = (Path(__file__).parent / "web" / "index.html").read_bytes()
+        files = {"/": ("index.html", "text/html"), "/web/employee.html": ("employee.html", "text/html"),
+                 "/web/sw.js": ("sw.js", "text/javascript")}
+        if path in files:
+            filename, content_type = files[path]
+            body = (Path(__file__).parent / "web" / filename).read_bytes()
             self.send_response(200)
-            for name, value in (("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(body))),
+            for name, value in (("Content-Type", content_type + "; charset=utf-8"), ("Content-Length", str(len(body))),
                                 ("Cache-Control", "no-store"), ("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'")):
                 self.send_header(name, value)
             self.end_headers()

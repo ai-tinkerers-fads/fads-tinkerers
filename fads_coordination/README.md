@@ -1,7 +1,7 @@
 # Hooks contract
 
-Every endpoint takes and returns JSON. Every inbound call carries the employee or
-caller id it acts for; the demo trusts it, a real host must authenticate it.
+Hooks take and return JSON, except the Server-Sent Events stream.
+Every inbound call carries the employee or caller id it acts for; the demo trusts it, a real host must authenticate it.
 Every outbound item is an info package with `type`, `id`, `createdAt`,
 `workspaceId`, `incidentId`, `revision`, and a typed `body`.
 
@@ -14,6 +14,9 @@ Every outbound item is an info package with `type`, `id`, `createdAt`,
 | `POST /hooks/employees/{id}/availability` | `{kind: absence, day_off, late, custom; incidentId?; window: {start, end}; reason; sourceId}` | Store an availability override. Replan. Emit `conflict` if any task becomes blocked or misses its deadline. |
 | `POST /hooks/reminders/{id}/acknowledge` | `{employeeId}` | Existing acknowledge rules. |
 | `POST /hooks/reminders/{id}/snooze` | `{employeeId, until}` | Existing snooze rules. Emits `conflict` if snooze passes the latest feasible start. |
+| `POST /hooks/tasks/{incidentId}/{taskId}/accept` | `{employeeId, sourceId}` | Record `acceptedAt`; emit `acceptance`. Does not complete work. |
+| `POST /hooks/notifications/{packageId}/snooze` | `{employeeId, minutes, sourceId}` | Queue a notification repeat on the demo clock, 1–60 minutes; three per original package. |
+| `POST /hooks/tasks/{incidentId}/{taskId}/delay` | `{employeeId, minutes or until, note, sourceId}` | Apply a Phase 3 `late` override anchored to the planned task start; replan and signal conflicts. |
 | `POST /hooks/tasks/{incidentId}/{taskId}/done` | `{employeeId, checklist: [{item, done}], actualMinutes?, waitingMinutes?, scopeChanged?, note?, sourceId}` | Mark complete. Missing actuals are stored as unknown and excluded from estimate learning. Emit `completion`. |
 | `POST /hooks/tasks/{incidentId}/{taskId}/proof` | `{employeeId, proof: {kind: image, file, text, link; ref; sha256?; note?}, sourceId}` | Store the reference only. Attach to the task. Included in the next `completion` package. |
 | `POST /hooks/workflows/{id}/{version}/confirm` | `{confirmedBy}` | Activate a pending catalog entry. |
@@ -23,21 +26,31 @@ same `sourceId` returns the original result and changes nothing.
 
 ### Outbound (data and signals out)
 
-Two transports, both always available:
+Three outbound transports (all local in this demo):
 
-- `GET /hooks/outbox?after=<cursor>&types=reminder,conflict,completion` returns
+- `GET /hooks/outbox?callerId=host&after=<cursor>&types=assignment,reminder,conflict&employeeId=alex` returns
   packages in order with a next cursor. Each polled item also carries its own
   `cursor`, allowing a consumer to resume after any processed item. This polling
-  metadata does not alter the stored/signed webhook envelope.
+  metadata does not alter the stored/signed webhook envelope. Both `types` and
+  `employeeId` are optional filters; only matching items advance the cursor.
 - Optional push: if `FADS_WEBHOOK_URL` and `FADS_WEBHOOK_SECRET` are set, each
   package is POSTed with an HMAC-SHA256 signature over timestamp plus body,
   bounded retries, and per-package delivery state. Off by default.
+- `GET /hooks/stream?callerId=alex&employeeId=alex&after=<cursor>` is a
+  `text/event-stream` response. Each matching package is an SSE event with its
+  cursor as `id`, type as `event`, and JSON envelope as `data`. `Last-Event-ID`
+  takes precedence over `after` on reconnect. The handler polls SQLite every
+  second and sends a comment heartbeat every 15 seconds. The demo uses
+  `ThreadingHTTPServer` with daemon request threads and one SQLite connection
+  per request, so open streams do not block hooks or health checks.
 
 | Package type | Body | When |
 | --- | --- | --- |
+| `assignment` | employeeId, taskId, name, kind assigned/removed/rescheduled, startAt, endAt, prepareAt, previousEmployeeId or null, revision, plainText, actions | First ownership, changed ownership, task removal, or moved start/end. Reassignment emits removed to the old employee and assigned to the new. |
+| `acceptance` | employeeId, taskId, acceptedAt | First acceptance of this ownership; for the backend. |
 | `schedule_entry` | employeeId, taskId, name, startAt, endAt, prepareAt, location, dependsOn | Each planned or replanned task. Upsert by taskId and revision. |
-| `reminder` | employeeId, reminderId, kind prepare or ready, taskId, dueAt, text, acknowledgeUrl, snoozeUrl | When a reminder becomes due inside the employee's work window. |
-| `conflict` | employeeId, taskId, cause (absence, snooze, no_window, overdue), affectedTasks, revision, overrideSequence, plainText | When a schedule update makes a task infeasible or moves the projected finish past the deadline. |
+| `reminder` | employeeId, reminderId, kind prepare or ready, taskId, dueAt, text, acknowledgeUrl, snoozeUrl, actions | When a reminder becomes due inside the employee's work window. |
+| `conflict` | employeeId, taskId, cause (absence, late, snooze, no_window, overdue), affectedTasks, revision, overrideSequence, plainText, actions | When a schedule update makes a task infeasible or moves the projected finish past the deadline. |
 | `completion` | employeeId, taskId, completedAt, checklist, actualMinutes or null, waitingMinutes, proofs[], note | On done. |
 | `state` | full plan snapshot | On request via `GET /hooks/state/{incidentId}`. |
 
@@ -71,6 +84,73 @@ A host supplies authenticated workspace/caller context, database, and clock.
 The optional `demo.py` mounts `/`, `/demo/state`, `/demo/action`, and
 `POST /demo/reset`; these are not required for hooks integration. Other owned
 parts live beside them: `web/`, `fixtures/`, `tests/`, and `scripts/`.
+
+## Actionable employee notifications
+
+Open [Alex’s employee page](http://127.0.0.1:8787/web/employee.html?employeeId=alex)
+or [Sam’s page](http://127.0.0.1:8787/web/employee.html?employeeId=sam) from the
+board, then click **Enable notifications**. Only that click requests permission
+and registers `web/sw.js`. Loopback (`127.0.0.1` or `localhost`) qualifies as a
+secure context. Keep the employee tab open; it forwards incoming SSE packages
+to the service worker. Cards show the same actions without requiring permission.
+The last cursor and recent cards are saved per employee in localStorage; browsers
+without EventSource use the employee-filtered outbox polling fallback.
+
+Notification buttons render on Chromium browsers; Safari and Firefox show the
+notification without buttons and the in-page card carries the same buttons.
+Nothing arrives while the browser is closed; that needs Web Push and HTTPS
+later. There is no Web Push, external call, or external dependency here.
+Browser/OS notification acceptance testing belongs to Claude; serving these
+files and testing hooks does not establish OS notification delivery.
+
+`assignment`, `reminder`, and `conflict` bodies include an ordered `actions`
+array of at most four objects: `id`, plain `label`, `method`, `url`, and `body`.
+Delay adds `needs: ["minutes", "note"]` and a `resolveUrl` pointing to the
+employee page with the package ID. Hook actions get a fresh `sourceId` per click. Every notification also has
+`{id: "open", label: "Open web", kind: "link", url}` pointing to its employee
+page and package card; link actions navigate without calling a hook.
+The service worker orders popup actions as Open web, Accept, then Snooze 5 min,
+up to `Notification.maxActions` (two when the limit is unavailable). A browser
+supporting only two actions gets Open web and Accept. All actions, including
+Snooze and Delay, remain on the card.
+macOS controls banner presentation and may reveal actions only on hover;
+the website cannot force an always-visible native button. A plain
+click opens/focuses the package card on the existing employee page. Delay
+resolve links add `action=delay` and open the note form. Errors open the employee page with
+the server’s explanation. The worker uses package IDs as notification tags.
+
+Action lists are snapshots at emission. Newly emitted packages omit Accept
+when accepted, Snooze after the original package's three-snooze cap, and Delay
+once work has started. Removed assignments retain only Open web;
+completion and backend acceptance packages have no actions. Hooks revalidate
+ownership and state when a stale button is clicked. Acceptance survives an
+ordinary revision with the same owner and resets on reassignment or removal.
+Upstream revisions remain unchanged by employee actions.
+
+Notification snooze only delays another notification; it does not move the
+schedule or alter the existing reminder snooze hook. Repeats carry top-level
+`repeatOf` naming the original package, retain its content, and regenerate
+state-appropriate actions and URLs for the new ID. Repeats of completed,
+started, cancelled, or reassigned work are suppressed. The latest feasible
+start uses a backward fit through availability windows, task dependencies,
+planned employee order and any incident deadline. A snooze past that bound
+returns 409 with guidance to use delay.
+
+Delay requires a 1–500 character note and either integer `minutes` (1–10080)
+or an offset-bearing `until` later than the planned start. It calls the existing
+availability override path with kind `late`, subtracting the interval from that
+task’s planned start to its new arrival time. It preserves earlier work on the
+day, supersedes affected reminders, publishes schedule/assignment updates and
+uses the Phase 3 conflict tolerance. The override stores the note; any resulting
+conflict includes it in `plainText` for the dispatcher. It does not resolve the
+conflict or contact upstream services.
+
+Fixture walkthrough for Claude: open the board and Alex’s page, enable
+notifications, then switch tabs. Reset testing to load the fixture; accept
+“Assigned: Secure site 09:00” and see accepted on the board. Enable Sam’s page,
+click “Driver available 30 min later” on the board, then Delay on Sam’s card,
+enter 30 minutes and “truck in the shop”; the conflict panel shows the note.
+Use the board’s +5 min control to deliver a snoozed notification.
 
 ## Assignment and reminder behavior
 
@@ -151,7 +231,8 @@ erase exported files, upstream records or filesystem backups.
 
 Ponytail was not installed: no local copy or rule files were found, and the
 no-external-service-calls constraint prohibits downloading its repository or
-installing from its marketplace. A **manual minimization pass** was used.
+installing from its marketplace. Ponytail itself was not run.
+A **manual minimization pass** was used.
 It removed a temporary outcome-values list and used a single batch statement
 for settings writes. Validation, idempotency, transactions, and revision checks
 are retained. At the Phase 1 commit, core.py fell from 592 to 591 lines and
@@ -265,9 +346,8 @@ provenance; other hosts can replay their current package to register it.
 ## Phase report and verification limits
 
 See [the per-phase report](PHASE-REPORT.md) for Done, Skipped, Tests, and Commits.
-After review fixes, the fixture suite has 50 passing tests; the existing HTTP
-smoke script passes 28 hook checks, including document mapping and catalog confirmation. Browser automation could not discover
-tabs and native app access was denied, so visual/click verification of the reset
-button is not claimed. Its real HTTP endpoint, reset data behavior, binding and
-JavaScript syntax were verified. No remote integration, file-byte upload, or
-push to the Git remote was performed.
+The Phase 8 unit suite and extended HTTP smoke script cover notification hooks,
+filtered streams, document mapping and catalog confirmation. Run evidence is
+saved in `artifacts/phase-8-unit.log` and `artifacts/phase-8-http.log`. Browser
+and OS notification acceptance testing is reserved for Claude. No remote
+integration, file-byte upload, or push to the Git remote was performed.

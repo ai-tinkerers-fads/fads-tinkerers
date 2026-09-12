@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FADS · Your work</title>
+<style>
+:root{font:16px system-ui,sans-serif;color:#193c34;background:#f3f5f1}body{max-width:700px;margin:32px auto;padding:0 20px}button,input,textarea{font:inherit}button{padding:10px 16px;border:1px solid #b9c9bf;border-radius:7px;background:white;cursor:pointer}button:disabled{opacity:.5}article{background:white;border:1px solid #dce3dd;border-radius:12px;padding:18px;margin:16px 0}h2{font-size:18px}p{line-height:1.5;white-space:pre-wrap}.buttons{display:flex;gap:8px;flex-wrap:wrap}small{color:#637271}dialog{border:1px solid #b9c9bf;border-radius:12px;max-width:440px;width:80%}label{display:block;margin:16px 0}input,textarea{display:block;width:95%;padding:8px;margin-top:6px}textarea{min-height:90px}.error{color:#903d26}a{color:inherit}
+</style>
+</head>
+<body>
+<a href="/">Dispatcher board</a>
+<h1>Your work</h1><p id="employee"></p>
+<button id="enable">Enable notifications</button>
+<p id="status" role="status">Connecting…</p><p id="error" class="error" role="alert"></p>
+<main id="cards"></main>
+<dialog id="delay"><form id="delay-form">
+<h2>Delay work</h2><p id="delay-title"></p>
+<label>Minutes<input id="minutes" type="number" min="1" max="10080" value="30" required></label>
+<label>Note for the dispatcher<textarea id="note" maxlength="500" required></textarea></label>
+<p id="delay-error" class="error" role="alert"></p>
+<div class="buttons"><button id="cancel" type="button">Cancel</button><button type="submit">Send delay</button></div>
+</form></dialog>
+<script>
+const $ = id => document.getElementById(id);
+const query = new URLSearchParams(location.search);
+const employeeId = query.get('employeeId') || 'alex';
+const storageKey = 'fads-notifications:' + employeeId;
+let saved;
+try { saved = JSON.parse(localStorage.getItem(storageKey)); } catch (_) {}
+let cursor = Number.isSafeInteger(saved?.cursor) && saved.cursor >= 0 ? saved.cursor : 0;
+const items = new Map((Array.isArray(saved?.items) ? saved.items : []).map(item => [item.id, item]));
+let registration, delayAction, stream;
+$('employee').textContent = employeeId;
+$('error').textContent = query.get('error') || '';
+function remember() {
+  try { localStorage.setItem(storageKey, JSON.stringify({cursor, items: [...items.values()].slice(-100)})); } catch (_) {}
+}
+function render() {
+  $('cards').replaceChildren();
+  for (const item of [...items.values()].reverse()) {
+    const card = document.createElement('article');
+    card.id = 'package-' + item.id;
+    card.tabIndex = -1;
+    const heading = document.createElement('h2');
+    heading.textContent = item.body.name || item.body.taskId || item.type;
+    const text = document.createElement('p');
+    text.textContent = item.body.plainText || item.body.text || (item.type === 'acceptance' ? 'Accepted' : item.type === 'completion' ? 'Work completed' : 'Schedule updated');
+    const meta = document.createElement('small');
+    meta.textContent = item.type + ' · revision ' + item.revision;
+    const buttons = document.createElement('div');
+    buttons.className = 'buttons';
+    for (const action of item.body.actions || []) {
+      const button = document.createElement('button');
+      button.textContent = action.label;
+      button.onclick = async () => {
+        if (action.kind === 'link') { location.assign(action.url); return; }
+        if (action.needs) { openDelay(item); return; }
+        button.disabled = true;
+        try { await send(action); button.remove(); }
+        catch (error) { $('error').textContent = error.message; button.disabled = false; }
+      };
+      buttons.append(button);
+    }
+    card.append(heading, meta, text, buttons);
+    $('cards').append(card);
+  }
+}
+function openDelay(item) {
+  delayAction = item.body.actions?.find(action => action.id === 'delay');
+  if (!delayAction) { $('error').textContent = 'This notification has no delay action. Contact the dispatcher.'; return; }
+  $('delay-title').textContent = item.body.name || item.body.taskId;
+  $('delay-error').textContent = '';
+  if (!$('delay').open) $('delay').showModal();
+  $('note').focus();
+}
+async function send(action, fields = {}) {
+  const response = await fetch(action.url, {method: action.method, headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({...action.body, ...fields, sourceId: crypto.randomUUID()})});
+  const result = await response.json();
+  if (!response.ok) throw Error(result.error || 'Action failed');
+  $('error').textContent = '';
+  return result;
+}
+$('cancel').onclick = () => $('delay').close();
+$('delay-form').onsubmit = async event => {
+  event.preventDefault();
+  const button = event.submitter;
+  button.disabled = true;
+  try { await send(delayAction, {minutes: Number($('minutes').value), note: $('note').value}); $('delay').close(); }
+  catch (error) { $('delay-error').textContent = error.message; }
+  finally { button.disabled = false; }
+};
+$('enable').onclick = async () => {
+  try {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) throw Error('Use the buttons on your cards in this browser.');
+    if (await Notification.requestPermission() !== 'granted') throw Error('Notifications are not enabled. Your cards still work.');
+    await navigator.serviceWorker.register('/web/sw.js');
+    registration = await navigator.serviceWorker.ready;
+    $('enable').textContent = 'Notifications enabled';
+  } catch (error) { $('error').textContent = error.message; }
+};
+function receive(item) {
+  if (item.body.employeeId !== employeeId || items.has(item.id)) return;
+  items.set(item.id, item);
+  // Stored envelopes are immutable; these cards reflect later task signals.
+  for (const prior of items.values()) {
+    if (prior.id === item.id || prior.incidentId !== item.incidentId || prior.body.taskId !== item.body.taskId) continue;
+    if (item.type === 'acceptance') prior.body.actions = prior.body.actions?.filter(action => action.id !== 'accept');
+    if (item.type === 'completion' || (item.type === 'assignment' && item.body.kind === 'removed')) prior.body.actions = prior.body.actions?.filter(action => action.kind === 'link');
+  }
+  while (items.size > 100) items.delete(items.keys().next().value);
+  cursor = Math.max(cursor, item.cursor);
+  remember(); render();
+  if (registration?.active && Notification.permission === 'granted' && ['assignment','reminder','conflict'].includes(item.type)) {
+    registration.active.postMessage({package: item});
+  }
+}
+async function polling() {
+  try {
+    let page;
+    do {
+      const response = await fetch('/hooks/outbox?' + new URLSearchParams({callerId: employeeId, employeeId, after: cursor}));
+      if (!response.ok) throw Error('Unable to read notifications');
+      page = await response.json();
+      page.items.forEach(receive);
+    } while (page.items.length === 100);
+    $('status').textContent = 'Connected · polling';
+  } catch (error) { $('status').textContent = error.message + '; retrying…'; }
+  setTimeout(polling, 2000);
+}
+async function start() {
+  if ('serviceWorker' in navigator) {
+    registration = await navigator.serviceWorker.getRegistration('/web/');
+    navigator.serviceWorker.addEventListener('message', event => {
+      if (event.data?.error) $('error').textContent = event.data.error;
+    });
+  }
+  render();
+  if ('EventSource' in window) {
+    stream = new EventSource('/hooks/stream?' + new URLSearchParams({callerId: employeeId, employeeId, after: cursor}));
+    for (const type of ['assignment','reminder','conflict','schedule_entry','acceptance','completion']) {
+      stream.addEventListener(type, event => receive(JSON.parse(event.data)));
+    }
+    stream.onopen = () => { $('status').textContent = 'Connected · keep this tab open for notifications'; };
+    stream.onerror = () => { $('status').textContent = 'Reconnecting… Your cards still work.'; };
+  } else { polling(); }
+  const target = query.get('package');
+  if (target) {
+    let item = items.get(target), after = 0;
+    // A deep link may refer to an older package than the locally cached cards.
+    while (!item) {
+      const response = await fetch('/hooks/outbox?' + new URLSearchParams({callerId: employeeId, employeeId, after}));
+      if (!response.ok) throw Error('Unable to open notification');
+      const page = await response.json();
+      item = page.items.find(candidate => candidate.id === target);
+      if (!page.items.length) break;
+      after = page.nextCursor;
+    }
+    if (item) {
+      items.set(item.id, item);
+      render();
+      const card = $('package-' + item.id);
+      card.scrollIntoView({block: 'center'});
+      card.focus({preventScroll: true});
+      if (query.get('action') === 'delay') openDelay(item);
+    } else $('error').textContent = 'Notification unavailable for this employee.';
+  }
+}
+start().catch(error => { $('error').textContent = error.message; });
+</script>
+</body>
+</html>
