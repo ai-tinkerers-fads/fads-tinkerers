@@ -275,3 +275,22 @@ A 20-minute late arrival may use existing slack and produce no conflict.
 Schedule upserts include `overrideSequence`; consumers order same-revision
 updates by outbox cursor. Snoozes beyond feasible work windows persist as
 constraints and signal a conflict, instead of silently undoing the snooze.
+
+## Completion and evidence
+
+Done requires a nonempty checklist of `{item, done: true}` records and the
+assigned `employeeId`. `actualMinutes` omitted or null stays SQL/JSON null and
+is excluded from estimate samples; zero is accepted only when explicitly
+supplied. Waiting minutes default to zero and do not train active estimates.
+Local checklist completion is an overlay, so it does not increment or rewrite
+the upstream assignment revision, and replaying a snapshot cannot reopen work.
+The legacy library/demo replan and cancellation helpers represent new simulated
+upstream revisions; employee hooks never use them.
+
+Proof hooks store only the provided reference, optional checksum text, and note.
+No URL is fetched, no path opened, and no checksum or content is analyzed.
+Post proof before done to include it in the completion envelope. Later proof
+references are visible in the state snapshot; already emitted envelopes remain
+immutable. File-byte upload is off and has no endpoint. Source receipts are
+transactional with the write and outbox event, preventing duplicates on replay.
+The UI shows `actual unknown` and allows leaving active minutes blank.

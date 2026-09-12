@@ -219,6 +219,12 @@ class Coordination:
             PRIMARY KEY(workspace,source_id));
         CREATE TABLE IF NOT EXISTS suppressed (
             workspace TEXT, kind TEXT, source_id TEXT, PRIMARY KEY(workspace,kind,source_id));
+        CREATE TABLE IF NOT EXISTS task_completions (
+            workspace TEXT, incident TEXT, task TEXT, workflow TEXT, version INTEGER,
+            body TEXT, PRIMARY KEY(workspace,incident,task,workflow,version));
+        CREATE TABLE IF NOT EXISTS proofs (
+            id TEXT PRIMARY KEY, workspace TEXT, incident TEXT, task TEXT,
+            employee TEXT, kind TEXT, ref TEXT, sha256 TEXT, note TEXT, received_at TEXT);
         CREATE TABLE IF NOT EXISTS reminder_snoozes (
             reminder_id TEXT PRIMARY KEY, workspace TEXT, incident TEXT, task TEXT,
             revision INTEGER, employee TEXT, until_at TEXT);
@@ -253,6 +259,10 @@ class Coordination:
         package = self.get_package(workspace, incident)
         if package is None:
             raise InvalidInput("Unknown incident")
+        for row in self.db.execute("SELECT task,body FROM task_completions WHERE workspace=? AND incident=? AND workflow=? AND version=?", (workspace, incident, package["workflow"]["id"], package["workflow"]["version"])):
+            for assignment in package["assignments"]:
+                if assignment["taskId"] == row["task"]:
+                    assignment.update(json.loads(row["body"]))
         return package
 
     def put_package(self, package, now):
@@ -291,8 +301,9 @@ class Coordination:
                 if prior:
                     profile = json.loads(prior[0])
             self.db.execute("INSERT INTO forecasts VALUES (?,?,?,?,?)", (workspace, incident, task["id"], package["revision"], canonical(profile)))
-        self._refresh(package, now)
-        self.publish_schedule(package, now)
+        effective = self._package(workspace, incident)
+        self._refresh(effective, now)
+        self.publish_schedule(effective, now)
 
     def replan(self, workspace, incident, now, expected_revision):
         with self.db:
@@ -316,7 +327,7 @@ class Coordination:
         return self.state(workspace, incident, now)
 
     def estimate(self, workspace, workflow, version, task, context, baseline):
-        rows = self.db.execute("SELECT id,baseline,actual FROM outcomes WHERE workspace=? AND workflow=? AND workflow_version=? AND task=? AND context=? AND scope_changed=0 ORDER BY created_at DESC,id DESC LIMIT 50", (workspace, workflow, version, task, context)).fetchall()
+        rows = self.db.execute("SELECT id,baseline,actual FROM outcomes WHERE workspace=? AND workflow=? AND workflow_version=? AND task=? AND context=? AND scope_changed=0 AND actual IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 50", (workspace, workflow, version, task, context)).fetchall()
         ratios = [r["actual"] / r["baseline"] for r in rows]
         count = len(ratios)
         # Five baseline-equivalent observations temper small samples. This is
@@ -632,13 +643,18 @@ class Coordination:
                 raise InvalidInput("Snooze must delay the existing reminder and be no later than planned start")
             self.db.execute("UPDATE reminders SET snooze_until=?,reason='Recipient snoozed' WHERE id=?", (iso(until), reminder_id))
 
-    def complete(self, workspace, incident, task_id, actual, waiting, scope_changed, evidence, now, expected_revision, started_at=None):
-        number(actual, "actualMinutes")
+    def complete(self, workspace, incident, task_id, actual, waiting, scope_changed, evidence, now, expected_revision, started_at=None, *, employee=None, checklist=None, source=None):
+        if actual is not None:
+            number(actual, "actualMinutes")
         number(waiting, "waitingMinutes")
         required({"evidence": evidence}, "evidence", 1000)
         now = stamp(now)
         with self.db:
             self._begin()
+            if source is not None:
+                prior = self.replay(workspace, employee, source, "done:" + incident + ":" + task_id)
+                if prior is not None:
+                    return prior
             package = self._package(workspace, incident)
             if package["revision"] != expected_revision:
                 raise Conflict("Plan changed; refresh before completing")
@@ -648,6 +664,8 @@ class Coordination:
             assignments = {a["taskId"]: a for a in package["assignments"]}
             if task_id not in tasks:
                 raise InvalidInput("Unknown task")
+            if employee is not None and assignments[task_id]["employeeId"] != employee:
+                raise InvalidInput("Task is not assigned to this employee")
             if assignments[task_id]["status"] == "complete":
                 raise Conflict("Task already complete")
             if any(assignments[d]["status"] != "complete" for d in tasks[task_id].get("dependsOn", [])):
@@ -667,9 +685,66 @@ class Coordination:
                          "workflowId": workflow["id"], "workflowVersion": workflow["version"], "context": package["context"],
                          "baselineMinutes": tasks[task_id]["estimatedMinutes"], "predictedMinutes": forecast["recommendedMinutes"], "actualMinutes": actual,
                          "waitingMinutes": waiting, "scopeChanged": scope_changed, "evidence": evidence}, now)
+            if source is not None:
+                self.db.execute("INSERT INTO task_completions VALUES (?,?,?,?,?,?)", (workspace, incident, task_id, workflow["id"], workflow["version"], canonical({k: v for k, v in assignments[task_id].items() if k in ("status", "completedAt", "startedAt")})))
+                result = self.emit(package, "completion", {"employeeId": employee, "taskId": task_id,
+                    "completedAt": iso(now), "checklist": checklist, "actualMinutes": actual,
+                    "waitingMinutes": waiting, "scopeChanged": scope_changed, "proofs": self.task_proofs(workspace, incident, task_id),
+                    "note": evidence if evidence != "Checklist completion; no effort observation supplied" else ""}, now, source)
+                self._refresh(package, now)
+                self.publish_schedule(package, now)
+                return self.receipt(workspace, employee, source, "done:" + incident + ":" + task_id, result)
             package["revision"] += 1
             self._put(package, now)
         return self.state(workspace, incident, now)
+
+    def done(self, workspace, incident, task, data, now):
+        employee, source = required(data, "employeeId"), required(data, "sourceId")
+        checklist = data.get("checklist")
+        if not isinstance(checklist, list) or not 1 <= len(checklist) <= 100:
+            raise InvalidInput("checklist must contain 1 to 100 items")
+        for item in checklist:
+            required(item, "item", 500)
+            if type(item.get("done")) is not bool:
+                raise InvalidInput("Checklist done must be boolean")
+        if not all(item["done"] for item in checklist):
+            raise InvalidInput("Complete every checklist item before marking work done")
+        note = data.get("note", "")
+        if not isinstance(note, str) or len(note) > 1000:
+            raise InvalidInput("note must be text of at most 1000 characters")
+        package = self._package(workspace, incident)
+        return self.complete(workspace, incident, task, data.get("actualMinutes"), data.get("waitingMinutes", 0),
+                             data.get("scopeChanged", False), note or "Checklist completion; no effort observation supplied", now,
+                             package["revision"], employee=employee, checklist=checklist, source=source)
+
+    def task_proofs(self, workspace, incident, task):
+        return [dict(r) for r in self.db.execute("SELECT id,kind,ref,sha256,note,received_at AS receivedAt FROM proofs WHERE workspace=? AND incident=? AND task=? ORDER BY received_at,id", (workspace, incident, task))]
+
+    def add_proof(self, workspace, incident, task, data, now):
+        employee, source = required(data, "employeeId"), required(data, "sourceId")
+        with self.db:
+            self._begin()
+            route = "proof:" + incident + ":" + task
+            prior = self.replay(workspace, employee, source, route)
+            if prior is not None:
+                return prior
+            package = self._package(workspace, incident)
+            if not any(a["taskId"] == task and a["employeeId"] == employee for a in package["assignments"]):
+                raise InvalidInput("Task is not assigned to this employee")
+            proof = data.get("proof", {})
+            if proof.get("kind") not in ("image", "file", "text", "link"):
+                raise InvalidInput("Unknown proof kind")
+            ref = required(proof, "ref", 2000)
+            digest = proof.get("sha256")
+            if digest is not None and (not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdefABCDEF" for c in digest)):
+                raise InvalidInput("sha256 must be a 64-character hex digest")
+            note = proof.get("note", "")
+            if not isinstance(note, str) or len(note) > 1000:
+                raise InvalidInput("note must be text of at most 1000 characters")
+            proof_id = key(workspace, employee, source)
+            self.db.execute("INSERT INTO proofs VALUES (?,?,?,?,?,?,?,?,?,?)", (proof_id, workspace, incident, task, employee, proof["kind"], ref, digest, note, iso(now)))
+            result = {"proofId": proof_id, "incidentId": incident, "taskId": task, "storedReferenceOnly": True}
+            return self.receipt(workspace, employee, source, route, result)
 
     def record_outcome(self, workspace, outcome, now):
         with self.db:
@@ -681,7 +756,9 @@ class Coordination:
         version = number(outcome.get("workflowVersion"), "workflowVersion", 1)
         baseline = number(outcome.get("baselineMinutes"), "baselineMinutes", 1)
         predicted = number(outcome.get("predictedMinutes", baseline), "predictedMinutes", 1)
-        actual = number(outcome.get("actualMinutes"), "actualMinutes")
+        actual = outcome.get("actualMinutes")
+        if actual is not None:
+            number(actual, "actualMinutes")
         waiting = number(outcome.get("waitingMinutes", 0), "waitingMinutes")
         changed = outcome.get("scopeChanged", False)
         if type(changed) is not bool:
@@ -761,6 +838,7 @@ class Coordination:
         return {"demo": True, "now": iso(now), "package": package, "incidentStatus": incident_status,
                 "estimatedResolutionAt": max(t["endAt"] for t in schedule) if all(t["endAt"] for t in schedule) else None,
                 "schedule": schedule, "reminders": reminders,
+                "proofs": [dict(r) for r in self.db.execute("SELECT task AS taskId,employee AS employeeId,kind,ref,sha256,note,received_at AS receivedAt FROM proofs WHERE workspace=? AND incident=?", (workspace, incident))],
                 "notifications": [{"id": n["id"], "reminderId": n["reminder_id"], "employeeId": n["employee"], "taskId": n["task"], "kind": n["kind"], "body": n["body"], "createdAt": n["created_at"], "status": n["status"], "delivery": "simulated_in_app"} for n in notes],
                 "lessons": [dict(r) for r in self.db.execute("SELECT * FROM lessons WHERE workspace=? ORDER BY updated_at DESC", (workspace,))],
                 "outcomes": [dict(r) for r in self.db.execute("SELECT * FROM outcomes WHERE workspace=? ORDER BY created_at DESC,id", (workspace,))]}

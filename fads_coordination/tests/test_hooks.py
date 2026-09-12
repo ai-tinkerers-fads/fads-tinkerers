@@ -176,3 +176,46 @@ class HookTests(unittest.TestCase):
         self.assertEqual(sam['availability'][0]['start'],datetime.fromisoformat(self.app.available_windows(other,sam,self.now)[0]['start']).astimezone(self.now.tzinfo).isoformat())
         with self.assertRaises(InvalidInput):
             self.hooks.post('/hooks/employees/sam/availability', {'employeeId':'alex'})
+
+    def done(self, task='secure', employee='alex', source='done-fixture', **data):
+        return self.hooks.post(f'/hooks/tasks/{self.incident}/{task}/done', {
+            'employeeId':employee, 'checklist':[{'item':'Assigned work done','done':True}],
+            'sourceId':source, **data})
+
+    def test_phase4_unknown_actual_completion_proof_and_idempotency(self):
+        self.load()
+        data={'employeeId':'alex','sourceId':'fixture-proof','proof':{'kind':'image','ref':'fixture://proof/unread-image.png','sha256':'a'*64,'note':'Reference only'}}
+        route=f'/hooks/tasks/{self.incident}/secure/proof'
+        first=self.hooks.post(route,data)
+        self.assertEqual(first,self.hooks.post(route,data))
+        self.assertEqual(1,self.app.db.execute('SELECT COUNT(*) FROM proofs').fetchone()[0])
+        completed=self.done()
+        self.assertEqual(completed,self.done())
+        self.assertEqual('completion',completed['type'])
+        self.assertIsNone(completed['body']['actualMinutes'])
+        self.assertEqual(data['proof']['ref'],completed['body']['proofs'][0]['ref'])
+        self.assertEqual(1,len(self.items('completion')))
+        state=self.app.state(self.ws,self.incident,self.now)
+        self.assertIsNone(state['outcomes'][0]['actual'])
+        self.assertEqual('complete',state['schedule'][0]['status'])
+        self.assertEqual(1,state['package']['revision'])
+        profile=self.app.estimate(self.ws,'branch-removal',1,'secure','standard',10)
+        self.assertEqual(0,profile['sampleCount'])
+        self.load()  # Replayed upstream snapshot must not undo local completion.
+        self.package['revision']=2
+        self.load()
+        self.assertEqual('complete',self.app.state(self.ws,self.incident,self.now)['schedule'][0]['status'])
+
+    def test_phase4_known_actuals_and_checklist_employee_guards(self):
+        self.load()
+        for fields in ({'employee':'sam'}, {'checklist':[{'item':'Unchecked','done':False}]}, {'actualMinutes':-1}):
+            with self.assertRaises(InvalidInput):
+                self.done(**fields)
+        self.assertEqual(0,self.app.db.execute('SELECT COUNT(*) FROM outcomes').fetchone()[0])
+        result=self.done(actualMinutes=12,waitingMinutes=3,note='Fixture actual observation')
+        self.assertEqual((12,3),(result['body']['actualMinutes'],result['body']['waitingMinutes']))
+        self.assertEqual(1,self.app.estimate(self.ws,'branch-removal',1,'secure','standard',10)['sampleCount'])
+        with self.assertRaises(Conflict):
+            self.done(source='another-done')
+        with self.assertRaises(Conflict):
+            self.hooks.post(f'/hooks/tasks/{self.incident}/secure/proof',{'employeeId':'alex','sourceId':'done-fixture','proof':{'kind':'link','ref':'fixture://unused'}})

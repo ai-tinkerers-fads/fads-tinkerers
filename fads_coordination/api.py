@@ -79,6 +79,11 @@ class Hooks:
                 raise InvalidInput("Workspace does not match host context")
             return self.app.put_package(package, self.now)
         parts = [unquote(part) for part in path.strip("/").split("/")]
+        if len(parts) == 5 and parts[:2] == ["hooks", "tasks"]:
+            if parts[4] == "done":
+                return self.app.done(self.workspace, parts[2], parts[3], data, self.now)
+            if parts[4] == "proof":
+                return self.app.add_proof(self.workspace, parts[2], parts[3], data, self.now)
         if len(parts) == 4 and parts[:2] == ["hooks", "employees"] and parts[3] == "availability":
             if required(data, "employeeId") != parts[2]:
                 raise InvalidInput("employeeId must match the path")

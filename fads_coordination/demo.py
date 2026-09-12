@@ -48,7 +48,11 @@ def action(app, data):
     elif name == "snooze":
         app.snooze(workspace, data.get("reminderId"), data.get("employeeId"), data.get("until"), now)
     elif name == "complete":
-        actual = number(data.get("actualMinutes"), "actualMinutes", 1, 480)
+        actual = data.get("actualMinutes")
+        if actual is not None:
+            number(actual, "actualMinutes", 0, 480)
+        if data.get("revision") != package["revision"]:
+            raise Conflict("Plan changed; refresh first")
         waiting = number(data.get("waitingMinutes", 0), "waitingMinutes", 0, 480)
         task = next((t for t in app.plan(package, now) if t["taskId"] == data.get("taskId")), None)
         if task is None or task["state"] == "blocked":
@@ -56,9 +60,10 @@ def action(app, data):
         # Explicitly simulate performing this task; actual effort is supplied by
         # the dispatcher, never inferred from elapsed wall-clock time.
         started_at = max(now, stamp(task["startAt"]))
-        completed_at = started_at + timedelta(minutes=actual + waiting)
+        completed_at = started_at + timedelta(minutes=(actual if actual is not None else task["estimatedMinutes"]) + waiting)
         app.complete(workspace, incident, data.get("taskId"), actual, waiting,
-                     data.get("scopeChanged", False), data.get("evidence", ""), completed_at, data.get("revision"), started_at)
+                     data.get("scopeChanged", False), data.get("evidence") or "Checklist completion; no effort observation supplied", completed_at, data.get("revision"), started_at,
+                     employee=task["employeeId"], checklist=[{"item": "Assigned work done", "done": True}], source=uuid.uuid4().hex)
         now = completed_at
     elif name == "replan":
         app.replan(workspace, incident, now, data.get("revision"))
