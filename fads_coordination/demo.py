@@ -22,8 +22,7 @@ def settings(app):
 
 def set_values(app, **values):
     with app.db:
-        for name, value in values.items():
-            app.db.execute("INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (name, str(value)))
+        app.db.executemany("INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ((name, str(value)) for name, value in values.items()))
 
 
 def initialize(path):

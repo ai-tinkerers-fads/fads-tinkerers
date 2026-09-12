@@ -220,3 +220,14 @@ scoped notes, availability changes and completion. Local run evidence belongs
 under ignored `artifacts/`, not in the shared source tree. Before real deployment,
 verify upstream identity/authorization, webhook ordering, model isolation,
 notification consent and the chosen provider's delivery contracts.
+
+## Phase 1 minimization audit
+
+Ponytail was not installed: no local copy or rule files were found, and the
+no-external-service-calls constraint prohibits downloading its repository or
+installing from its marketplace. A **manual minimization pass** was used.
+It removed a temporary outcome-values list and used a single batch statement
+for settings writes. Validation, idempotency, transactions, and revision checks
+are retained. At the Phase 1 commit, core.py fell from 592 to 591 lines and
+demo.py from 232 to 231; all existing behavior tests passed. Later phases use
+small standard-library functions and review for unnecessary abstractions.

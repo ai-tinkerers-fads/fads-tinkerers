@@ -502,8 +502,7 @@ class Coordination:
             self._outcome(workspace, outcome, now)
 
     def _outcome(self, workspace, outcome, now):
-        values = [required(outcome, field, 1000 if field == "evidence" else 200) for field in ("id", "incidentId", "taskId", "workflowId", "context", "evidence")]
-        oid, incident, task, workflow, context, evidence = values
+        oid, incident, task, workflow, context, evidence = (required(outcome, field, 1000 if field == "evidence" else 200) for field in ("id", "incidentId", "taskId", "workflowId", "context", "evidence"))
         version = number(outcome.get("workflowVersion"), "workflowVersion", 1)
         baseline = number(outcome.get("baselineMinutes"), "baselineMinutes", 1)
         predicted = number(outcome.get("predictedMinutes", baseline), "predictedMinutes", 1)

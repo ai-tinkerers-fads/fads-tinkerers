@@ -9,3 +9,8 @@ class LayoutTests(unittest.TestCase):
         for name in ("fixtures", "tests", "scripts", "web"):
             self.assertTrue((module / name).is_dir())
         self.assertTrue((module / "fixtures/branch-removal.json").is_file())
+
+    def test_manual_minimization_fallback_is_disclosed(self):
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+        self.assertIn("manual minimization pass", readme)
+        self.assertIn("Ponytail was not installed", readme)
