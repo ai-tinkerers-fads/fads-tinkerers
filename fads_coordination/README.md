@@ -70,6 +70,8 @@ python3 -m fads_coordination.demo
 python3 -m unittest discover -s fads_coordination/tests -v
 python3 fads_coordination/scripts/smoke_coordination.py
 python3 fads_coordination/scripts/smoke_hooks.py
+# Optional JavaScript unit checks, using Node built-ins only:
+node fads_coordination/tests/test_service_worker.cjs
 ```
 
 Open [the local workboard](http://127.0.0.1:8787). `--port` and `--db` select an
@@ -115,7 +117,10 @@ supporting only two actions gets Open web and Accept. All actions, including
 Snooze and Delay, remain on the card.
 macOS controls banner presentation and may reveal actions only on hover;
 the website cannot force an always-visible native button. A plain
-click opens/focuses the package card on the existing employee page. Delay
+click opens/focuses the package card on the existing employee page. The worker
+focuses an existing tab before navigating, uses the returned window client, and
+opens a new tab if the old one disappeared. Dispatcher/employee navigation
+links open another tab so the live notification receiver stays open. Delay
 resolve links add `action=delay` and open the note form. Errors open the employee page with
 the server’s explanation. The worker uses package IDs as notification tags.
 

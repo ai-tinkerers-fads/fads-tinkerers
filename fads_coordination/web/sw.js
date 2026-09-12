@@ -22,8 +22,13 @@ async function openEmployee(path) {
   for (const client of windows) {
     const current = new URL(client.url);
     if (current.pathname === url.pathname && current.searchParams.get('employeeId') === url.searchParams.get('employeeId')) {
-      await client.navigate(url.href);
-      return client.focus();
+      try {
+        await client.focus();
+        const navigated = await client.navigate(url.href);
+        if (navigated) return await navigated.focus();
+      } catch (_) {
+        // The tab may close or navigation may replace its WindowClient.
+      }
     }
   }
   return self.clients.openWindow(url.href);
