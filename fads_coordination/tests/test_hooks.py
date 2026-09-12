@@ -219,3 +219,52 @@ class HookTests(unittest.TestCase):
             self.done(source='another-done')
         with self.assertRaises(Conflict):
             self.hooks.post(f'/hooks/tasks/{self.incident}/secure/proof',{'employeeId':'alex','sourceId':'done-fixture','proof':{'kind':'link','ref':'fixture://unused'}})
+
+    def test_phase5_csv_and_saved_sheet_map_without_external_calls(self):
+        from fads_coordination.intake import load_document
+        mapping=json.loads((FIXTURE.parent/'field-map.json').read_text())
+        source={'kind':'csv','ref':'assignments.csv'}
+        result=self.hooks.post('/hooks/assignments/from-document', {'callerId':'fixture-reader','source':source,'fieldMap':mapping})
+        self.assertEqual(self.package['workflow'],result['package']['workflow'])
+        self.assertEqual(self.package['assignments'],result['package']['assignments'])
+        self.assertEqual(5,len(self.items('schedule_entry')))
+        self.hooks.post('/hooks/assignments/from-document', {'callerId':'fixture-reader','source':source,'fieldMap':mapping})
+        self.assertEqual(5,len(self.items('schedule_entry')))
+        sheet,_=load_document({'kind':'ambiguous_sheet','ref':'sheet-response.json'},mapping)
+        self.assertEqual(self.package['workflow'],sheet['workflow'])
+        with self.assertRaises(InvalidInput):
+            load_document({'kind':'csv','ref':'../../core.py'},mapping)
+
+    def test_phase5_changed_row_supersedes_only_its_task(self):
+        from fads_coordination.intake import read_rows, map_rows
+        mapping=json.loads((FIXTURE.parent/'field-map.json').read_text())
+        source={'kind':'csv','ref':'assignments.csv'}
+        rows=read_rows(source)
+        package,digest=map_rows(rows,mapping,source)
+        self.app.put_document(package,json.dumps(source),digest,self.now)
+        old=self.app.state(self.ws,self.incident,self.now)['reminders']
+        row=next(r for r in rows if r['Step']=='transport')
+        row.update({'Worker':'pat','Worker name':'Pat','Assignee':'pat'})
+        changed,new_digest=map_rows(rows,mapping,source)
+        self.assertNotEqual(package['revision'],changed['revision'])
+        self.app.put_document(changed,json.dumps(source),new_digest,self.now)
+        state=self.app.state(self.ws,self.incident,self.now)
+        current={r['id']:r for r in state['reminders']}
+        for reminder in old:
+            self.assertEqual('superseded' if reminder['taskId']=='transport' else 'scheduled',current[reminder['id']]['status'])
+        self.assertEqual('pat',state['schedule'][3]['employeeId'])
+        self.app.put_document(changed,json.dumps(source),new_digest,self.now)
+        with self.assertRaises(Conflict):
+            self.app.put_document(package,json.dumps(source),digest,self.now)
+
+    def test_phase5_missing_column_named_and_no_guessed_mapping(self):
+        from fads_coordination.intake import read_rows, map_rows
+        mapping=json.loads((FIXTURE.parent/'field-map.json').read_text())
+        source={'kind':'csv','ref':'assignments.csv'}
+        rows=read_rows(source)
+        del rows[0]['Assignee']
+        with self.assertRaisesRegex(InvalidInput,'Assignee'):
+            map_rows(rows,mapping,source)
+        del mapping['assignments']['employeeId']
+        with self.assertRaisesRegex(InvalidInput,'assignments.employeeId'):
+            map_rows(rows,mapping,source)

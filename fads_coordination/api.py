@@ -72,6 +72,16 @@ class Hooks:
         raise InvalidInput("Unknown hook")
 
     def post(self, path, data):
+        if path == "/hooks/assignments/from-document":
+            from .intake import load_document
+            required(data, "callerId")
+            source = data.get("source", {})
+            package, digest = load_document(source, data.get("fieldMap"))
+            if package["workspaceId"] != self.workspace:
+                raise InvalidInput("Workspace does not match host context")
+            result = self.app.put_document(package, canonical(source), digest, self.now)
+            result["documentRevision"] = digest
+            return result
         if path == "/hooks/assignments":
             required(data, "callerId")
             package = {k: v for k, v in data.items() if k != "callerId"}

@@ -66,7 +66,7 @@ def validate(package):
     if not isinstance(package, dict) or type(package.get("schemaVersion")) is not int or package.get("schemaVersion") != 1:
         raise InvalidInput("schemaVersion must be 1")
     required(package, "workspaceId")
-    number(package.get("revision"), "revision", 1)
+    number(package.get("revision"), "revision", 1, 2**53-1)
     stamp(package.get("startAt"))
     try:
         ZoneInfo(required(package, "timeZone"))
@@ -219,6 +219,9 @@ class Coordination:
             PRIMARY KEY(workspace,source_id));
         CREATE TABLE IF NOT EXISTS suppressed (
             workspace TEXT, kind TEXT, source_id TEXT, PRIMARY KEY(workspace,kind,source_id));
+        CREATE TABLE IF NOT EXISTS document_versions (
+            workspace TEXT, source TEXT, digest TEXT, revision INTEGER,
+            PRIMARY KEY(workspace,source,digest));
         CREATE TABLE IF NOT EXISTS task_completions (
             workspace TEXT, incident TEXT, task TEXT, workflow TEXT, version INTEGER,
             body TEXT, PRIMARY KEY(workspace,incident,task,workflow,version));
@@ -273,15 +276,16 @@ class Coordination:
             self._put(package, now)
         return self.state(package["workspaceId"], package["incident"]["id"], now)
 
-    def _put(self, package, now, refresh_estimates=False):
+    def _put(self, package, now, refresh_estimates=False, document_update=False):
         workspace, incident = package["workspaceId"], package["incident"]["id"]
         old = self.get_package(workspace, incident)
+        before = {t["taskId"]: t for t in self.plan(self._package(workspace, incident), now)} if old else {}
         if any(a["status"] == "complete" and stamp(a["completedAt"]) > stamp(now) for a in package["assignments"]):
             raise InvalidInput("Completed work cannot have a future completion timestamp")
         if any(stamp(a[field]) > stamp(now) for a in package["assignments"] for field in ("startedAt", "remainingUpdatedAt") if field in a):
             raise InvalidInput("Observed work timestamps cannot be in the future")
         if old:
-            if package["revision"] < old["revision"]:
+            if package["revision"] < old["revision"] and not document_update:
                 raise Conflict("Stale assignment revision")
             if package["revision"] == old["revision"]:
                 if canonical(package) != canonical(old):
@@ -289,7 +293,6 @@ class Coordination:
                 return
             if (old["workflow"]["id"], old["workflow"]["version"]) == (package["workflow"]["id"], package["workflow"]["version"]) and canonical(old["workflow"]) != canonical(package["workflow"]):
                 raise Conflict("Change the workflow version when changing its approved definition")
-            self.db.execute("UPDATE reminders SET status=?,reason=? WHERE workspace=? AND incident=? AND status IN ('scheduled','delivered')", ("cancelled" if package.get("cancelled") else "superseded", "Incident cancelled" if package.get("cancelled") else "Assignment or plan changed", workspace, incident))
         self.db.execute("INSERT INTO packages VALUES (?,?,?,?) ON CONFLICT(workspace,incident) DO UPDATE SET revision=excluded.revision,body=excluded.body", (workspace, incident, package["revision"], canonical(package)))
         workflow = package["workflow"]
         assignments = {a["taskId"]: a for a in package["assignments"]}
@@ -302,8 +305,36 @@ class Coordination:
                     profile = json.loads(prior[0])
             self.db.execute("INSERT INTO forecasts VALUES (?,?,?,?,?)", (workspace, incident, task["id"], package["revision"], canonical(profile)))
         effective = self._package(workspace, incident)
+        for task in self.plan(effective, now):
+            previous = before.get(task["taskId"])
+            same = previous and all(previous[f] == task[f] for f in ("employeeId", "startAt", "endAt", "prepareAt", "state", "status", "dependsOn"))
+            if same and not package.get("cancelled"):
+                self.db.execute("UPDATE reminders SET revision=? WHERE workspace=? AND incident=? AND task=? AND status IN ('scheduled','delivered','acknowledged')", (package["revision"], workspace, incident, task["taskId"]))
+            else:
+                self.db.execute("UPDATE reminders SET status=?,reason='Assignment or plan changed' WHERE workspace=? AND incident=? AND task=? AND status IN ('scheduled','delivered')", ("cancelled" if package.get("cancelled") else "superseded", workspace, incident, task["taskId"]))
+        removed = set(before) - {t["taskId"] for t in self.plan(effective, now)}
+        for task_id in removed:
+            self.db.execute("UPDATE reminders SET status='superseded',reason='Task removed' WHERE workspace=? AND incident=? AND task=? AND status IN ('scheduled','delivered')", (workspace, incident, task_id))
         self._refresh(effective, now)
         self.publish_schedule(effective, now)
+
+    def put_document(self, package, source, digest, now):
+        validate(package)
+        workspace, incident = package["workspaceId"], package["incident"]["id"]
+        with self.db:
+            self._begin()
+            old = self.get_package(workspace, incident)
+            collision = self.db.execute("SELECT 1 FROM document_versions WHERE workspace=? AND revision=? AND digest!=?", (workspace, package["revision"], digest)).fetchone()
+            if collision:
+                raise Conflict("Document revision hash collision")
+            seen = self.db.execute("SELECT revision FROM document_versions WHERE workspace=? AND source=? AND digest=?", (workspace, source, digest)).fetchone()
+            if seen and old and old["revision"] != package["revision"]:
+                raise Conflict("Historical document revision; use a new source snapshot")
+            # Hash revisions are identities, not clocks. Only this trusted local
+            # adapter may replace a different hash; regular package checks remain.
+            self._put(package, now, document_update=True)
+            self.db.execute("INSERT OR IGNORE INTO document_versions VALUES (?,?,?,?)", (workspace, source, digest, package["revision"]))
+        return self.state(workspace, incident, now)
 
     def replan(self, workspace, incident, now, expected_revision):
         with self.db:

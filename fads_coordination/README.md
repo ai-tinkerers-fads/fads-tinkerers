@@ -294,3 +294,30 @@ references are visible in the state snapshot; already emitted envelopes remain
 immutable. File-byte upload is off and has no endpoint. Source receipts are
 transactional with the write and outbox event, preventing duplicates on replay.
 The UI shows `actual unknown` and allows leaving active minutes blank.
+
+## Fixture document mapping
+
+`POST /hooks/assignments/from-document` takes `callerId`, `source`, and
+`fieldMap`. Use `source: {"kind":"csv","ref":"assignments.csv"}` and the
+object in [field-map.json](fixtures/field-map.json). The CSV is an illustrative
+fixture, not a team-supplied assigning document. Every column choice lives in
+that map. Sections are `package` (dot paths), `tasks`, `employees`, and
+`assignments`; specs declare a column and text/integer/number/json conversion.
+Repeated employee and task rows must agree. Missing required mappings name
+the package field; missing mapped columns name the exact column. Nothing is
+inferred from column names. Optional metadata columns must opt in explicitly.
+
+Only files inside this module's fixture directory can be read (256 KiB,
+100-row limits). `kind: ambiguous_sheet` reads `sheet-response.json`, a saved
+`{rows: [...]}` fixture, through the same map. The live sheet endpoint is
+**not called or verified**, and its actual response envelope may need mapping.
+
+A full SHA-256 of normalized mapped rows plus source identity is returned as
+`documentRevision`. The package revision uses its first 52 bits (exact in JSON
+numbers); full hashes detect collisions. These identities have no numeric time
+order: the trusted document adapter applies changed snapshots transactionally,
+while the ordinary assignment hook retains increasing-revision checks. Replaying
+the current hash is a no-op; replaying an older imported hash is rejected.
+Consumers order changes by outbox cursor. Only tasks whose assignments or
+schedule actually changed have reminders superseded; unchanged reminder IDs
+and acknowledgement state carry forward to the new revision.
