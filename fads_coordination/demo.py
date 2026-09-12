@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from .core import Coordination, Conflict, InvalidInput, canonical, iso, number, stamp
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / "fixtures" / "branch-removal.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "branch-removal.json"
 
 
 def settings(app):
