@@ -178,7 +178,7 @@ export class Intake {
       instruction:
         session.readbackCompleteAt !== undefined
           ? "The current draft has already been read back. If the customer has now clearly agreed, call confirm_draft with this revision. Do not repeat the readback or prepare unchanged facts."
-          : "Read these facts aloud, end with the short question Shall I log this?, and stop to listen. A natural clear affirmative is sufficient. Then call confirm_draft with this revision. Changed facts require prepare_draft and a fresh readback.",
+          : "Read the complete readback string aloud word for word, including all description qualifiers and every field. Do not summarize, paraphrase, or omit words. End with Shall I log this? and stop to listen. A natural clear affirmative is sufficient. Then call confirm_draft with this revision. Changed facts require prepare_draft and a fresh readback.",
     };
   }
 

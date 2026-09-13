@@ -46,7 +46,10 @@ The browser receives only its conversation token, never provider API keys.
 Production: https://fads.aindoori.com/voice. The main website includes a
 Photo report / Voice report switch. Next.js proxies `/voice` to port 8810
 and `/voice-api` to port 8811. Install the units in `deploy/` after `npm run build`.
-The API unit reads `~/.config/fads/runtime.env` and `~/.config/fads/openai.env`.
+The API unit reads `~/.config/fads/runtime.env`, `~/.config/fads/openai.env`,
+and `~/.config/fads/voice.env`. The last file contains the dedicated
+`AMBIGUOUS_API_KEY` for the FADS-Claw identity and must have mode `0600`.
+After replacing or revoking this key, restart `fads-voice-api.service`.
 The voice web process never receives the OpenAI key.
 Inspect service status with `systemctl status fads-voice-api fads-voice-web`.
 
@@ -63,6 +66,12 @@ npm run test:smoke
 Unit tests cover the adapter and confirmation/duplicate-write rules. The HTTP
 smoke test uses only an explicit demo session, covering a query, correction,
 confirmation, simulated logging, authorization, and session shutdown.
+
+For live verification, speak a clearly identified demo complaint, wait for the
+complete readback, and verbally confirm. Verify the returned task in Ambiguous
+and match its intake reference to the session revision. A connected call alone
+does not verify task creation. Incomplete readbacks remain blocked until the
+assistant speaks every prepared fact and obtains a new affirmative.
 
 ## Prototype limits
 
