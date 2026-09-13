@@ -141,6 +141,31 @@ for (const ending of [
     assert.equal(writes, 0);
     event({
       type: "session.output_transcript.delta",
+      event_id: "incomplete-readback",
+      delta: "Your road question is ready. Shall I log this?",
+      start_ms: 10,
+      end_ms: 30,
+    });
+    event({
+      type: "session.input_transcript.delta",
+      event_id: "premature-confirmation",
+      delta: "Yes, please.",
+      start_ms: 40,
+      end_ms: 60,
+    });
+    tool("confirm-incomplete", "confirm_draft", { revision: 1 });
+    await tick();
+    const recovery = sent.find((item) =>
+      item.type === "response.item.create" && item.item.call_id === "confirm-incomplete",
+    );
+    assert.ok(recovery);
+    const recoveryContent = JSON.parse(recovery.item.output);
+    assert.equal(writes, 0, "Missing facts must not bypass verbal confirmation");
+    assert.equal(recoveryContent.readback, content.readback);
+    assert.equal(recoveryContent.revision, 1);
+    assert.match(recoveryContent.instruction, /word for word/);
+    event({
+      type: "session.output_transcript.delta",
       event_id: "readback-1",
       delta: content.readback,
       start_ms: 100,
@@ -165,7 +190,7 @@ for (const ending of [
     assert.equal(JSON.parse(confirmed!.item.output).status, "saved");
     assert.equal(
       sent.filter((item) => item.type === "response.create").length,
-      2,
+      3,
     );
     assert.ok(
       sent.some(

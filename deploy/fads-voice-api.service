@@ -9,6 +9,7 @@ User=aindoori
 WorkingDirectory=/home/aindoori/Software_Projects/fads-tinkerers/apps/api
 EnvironmentFile=/home/aindoori/.config/fads/runtime.env
 EnvironmentFile=/home/aindoori/.config/fads/openai.env
+EnvironmentFile=/home/aindoori/.config/fads/voice.env
 Environment=NODE_ENV=production
 Environment=API_PORT=8811
 Environment=WEB_ORIGIN=https://fads.aindoori.com
