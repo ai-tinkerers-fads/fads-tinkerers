@@ -8,9 +8,10 @@
 </style>
 </head>
 <body>
-<a href="/">Dispatcher board</a>
+<a href="/" target="_blank" rel="noopener">Dispatcher board</a>
 <h1>Your work</h1><p id="employee"></p>
-<button id="enable">Enable notifications</button>
+<button id="enable">Enable notifications</button> <button id="notify">Send notification</button>
+<p id="notification-status" role="status"></p>
 <p id="status" role="status">Connecting…</p><p id="error" class="error" role="alert"></p>
 <main id="cards"></main>
 <dialog id="delay"><form id="delay-form">
@@ -20,6 +21,7 @@
 <p id="delay-error" class="error" role="alert"></p>
 <div class="buttons"><button id="cancel" type="button">Cancel</button><button type="submit">Send delay</button></div>
 </form></dialog>
+<script src="/web/notification-client.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -90,6 +92,10 @@ $('delay-form').onsubmit = async event => {
   catch (error) { $('delay-error').textContent = error.message; }
   finally { button.disabled = false; }
 };
+$('notify').onclick = async () => {
+  try { await sendDemoNotification(employeeId); $('notification-status').textContent = 'Notification sent. Click Open web on the popup.'; }
+  catch (error) { $('error').textContent = error.message; }
+};
 $('enable').onclick = async () => {
   try {
     if (!('Notification' in window) || !('serviceWorker' in navigator)) throw Error('Use the buttons on your cards in this browser.');
@@ -131,6 +137,7 @@ async function polling() {
 async function start() {
   if ('serviceWorker' in navigator) {
     registration = await navigator.serviceWorker.getRegistration('/web/');
+    if (registration) registration.update().catch(error => { $('error').textContent = error.message; });
     navigator.serviceWorker.addEventListener('message', event => {
       if (event.data?.error) $('error').textContent = event.data.error;
     });
